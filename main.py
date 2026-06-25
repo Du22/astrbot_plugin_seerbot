@@ -16,59 +16,69 @@ class SeerSpriteQuery(Star):
             return
 
         try:
+            # 每次请求新建客户端实例，避免连接复用导致的已关闭报错
             async with SeerAPI() as client:
-                # 移除不支持的 expand 参数，按 SDK 原生签名调用接口
+                # 对应 GET /v1/pet/{name} 接口
                 pet_detail = await client.get("pet", sprite_name)
 
                 # ========== 基础信息 ==========
                 info_text = "===== 赛尔号精灵图鉴 =====\n"
-                info_text += f"名称：{pet_detail.name}\n"
-                info_text += f"精灵ID：{pet_detail.id}\n"
+                info_text += f"名称：{getattr(pet_detail, 'name', '未知')}\n"
+                info_text += f"精灵ID：{getattr(pet_detail, 'id', '未知')}\n"
 
-                # 属性：兼容关联资源对象与纯ID两种返回
+                # 属性字段容错
                 try:
-                    attr_type = pet_detail.type
-                    attr_name = attr_type.name if hasattr(attr_type, 'name') else str(attr_type)
+                    attr_obj = getattr(pet_detail, 'type', None)
+                    attr_name = getattr(attr_obj, 'name', str(attr_obj)) if attr_obj else "未知"
                 except:
                     attr_name = "未知"
                 info_text += f"属性：{attr_name}\n"
 
-                # 性别：兼容空值、关联对象、纯ID三种情况
+                # 性别字段容错
                 try:
-                    gender = pet_detail.gender
-                    if not gender:
+                    gender_obj = getattr(pet_detail, 'gender', None)
+                    if not gender_obj:
                         gender_name = "无"
                     else:
-                        gender_name = gender.name if hasattr(gender, 'name') else str(gender)
+                        gender_name = getattr(gender_obj, 'name', str(gender_obj))
                 except:
                     gender_name = "无"
                 info_text += f"性别：{gender_name}\n"
 
-                # 进化阶段
+                # 进化阶段容错
                 try:
-                    evolve_stage = pet_detail.evolution_chain_index + 1
+                    evolve_idx = getattr(pet_detail, 'evolution_chain_index', 0)
+                    evolve_stage = f"第{evolve_idx + 1}阶"
                 except:
                     evolve_stage = "未知"
-                info_text += f"进化阶段：第{evolve_stage}阶\n\n"
+                info_text += f"进化阶段：{evolve_stage}\n\n"
 
                 # ========== 种族值 ==========
-                stats = pet_detail.base_stats
-                hp = getattr(stats, 'hp', 0)
-                atk = getattr(stats, 'atk', 0)
-                df = getattr(stats, 'def_', getattr(stats, 'def', 0))
-                spatk = getattr(stats, 'sp_atk', 0)
-                spdf = getattr(stats, 'sp_def', 0)
-                speed = getattr(stats, 'spd', 0)
-                total = getattr(stats, 'total', hp + atk + df + spatk + spdf + speed)
-
                 info_text += "【种族值】\n"
-                info_text += f"体力{hp:3d} 攻击{atk:3d} | 防御{df:3d}\n"
-                info_text += f"特攻{spatk:3d} 特防{spdf:3d} | 速度{speed:3d}\n"
-                info_text += f"种族总和：{total}"
+                try:
+                    stats = getattr(pet_detail, 'base_stats', None)
+                    if stats:
+                        hp = getattr(stats, 'hp', 0)
+                        atk = getattr(stats, 'atk', 0)
+                        # 兼容 def 关键字字段
+                        df = getattr(stats, 'def_', getattr(stats, 'def', 0))
+                        sp_atk = getattr(stats, 'sp_atk', 0)
+                        sp_def = getattr(stats, 'sp_def', 0)
+                        spd = getattr(stats, 'spd', 0)
+                        total = getattr(stats, 'total', hp + atk + df + sp_atk + sp_def + spd)
+
+                        info_text += f"体力{hp:3d} 攻击{atk:3d} | 防御{df:3d}\n"
+                        info_text += f"特攻{sp_atk:3d} 特防{sp_def:3d} | 速度{spd:3d}\n"
+                        info_text += f"种族总和：{total}"
+                    else:
+                        info_text += "暂无种族值数据"
+                except Exception:
+                    info_text += "种族值数据解析失败"
 
                 # ========== 魂印 ==========
                 info_text += "\n\n【魂印】\n"
                 try:
+                    # 对应 GET /v1/soulmark/{name} 接口，传入精灵名称
                     soulmark_detail = await client.get("soulmark", sprite_name)
                     sm_name = getattr(soulmark_detail, 'name', "未知魂印")
                     sm_desc = getattr(soulmark_detail, 'description', "暂无效果描述")
@@ -92,34 +102,35 @@ class SeerSpriteQuery(Star):
 
         try:
             async with SeerAPI() as client:
+                # 对应 GET /v1/mintmark/{name} 接口
                 mintmark_detail = await client.get("mintmark", mintmark_name)
 
                 # ========== 基础信息 ==========
                 info_text = "===== 赛尔号刻印图鉴 =====\n"
-                info_text += f"名称：{mintmark_detail.name}\n"
-                info_text += f"刻印ID：{mintmark_detail.id}\n"
+                info_text += f"名称：{getattr(mintmark_detail, 'name', '未知')}\n"
+                info_text += f"刻印ID：{getattr(mintmark_detail, 'id', '未知')}\n"
 
-                # 刻印类型兼容处理
+                # 刻印类型容错
                 try:
-                    mint_type = mintmark_detail.type
-                    mint_type_name = mint_type.name if hasattr(mint_type, 'name') else str(mint_type)
+                    type_obj = getattr(mintmark_detail, 'type', None)
+                    type_name = getattr(type_obj, 'name', str(type_obj)) if type_obj else "未知"
                 except:
-                    mint_type_name = "未知类型"
-                info_text += f"类型：{mint_type_name}\n\n"
+                    type_name = "未知"
+                info_text += f"类型：{type_name}\n\n"
 
                 # ========== 刻印属性数值 ==========
                 info_text += "【刻印属性】\n"
                 hp = getattr(mintmark_detail, 'hp', 0)
                 atk = getattr(mintmark_detail, 'atk', 0)
+                # 兼容 def 关键字字段
                 def_ = getattr(mintmark_detail, 'def_', getattr(mintmark_detail, 'def', 0))
                 sp_atk = getattr(mintmark_detail, 'sp_atk', 0)
                 sp_def = getattr(mintmark_detail, 'sp_def', 0)
                 spd = getattr(mintmark_detail, 'spd', 0)
+                total = hp + atk + def_ + sp_atk + sp_def + spd
 
                 info_text += f"体力 +{hp}  攻击 +{atk} | 防御 +{def_}\n"
                 info_text += f"特攻 +{sp_atk}  特防 +{sp_def} | 速度 +{spd}\n"
-                
-                total = hp + atk + def_ + sp_atk + sp_def + spd
                 info_text += f"属性总和：+{total}"
 
         except Exception as e:
