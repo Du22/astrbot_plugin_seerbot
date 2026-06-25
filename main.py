@@ -2,8 +2,6 @@ import requests
 from astrbot.api import AstrBotApi, event, register
 from astrbot.api.message_components import Image, Plain
 
-# 注册插件
-@register("seer_sprite_query", "赛尔号图鉴查询", "发送「精灵 名称」查询赛尔号精灵信息", "1.0")
 class SeerSpriteQuery:
     def __init__(self, api: AstrBotApi):
         self.api = api
