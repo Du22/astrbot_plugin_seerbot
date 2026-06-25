@@ -8,6 +8,52 @@ from httpx import HTTPStatusError
 class SeerPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
+        # 精灵名称 -> ID 的本地缓存字典
+        self._pet_name_map: dict[str, int] = {}
+        self._map_loaded = False
+
+    async def _load_pet_name_map(self):
+        """加载全量精灵ID-名称映射到本地缓存（仅执行一次）"""
+        if self._map_loaded:
+            return
+        try:
+            async with SeerAPI() as client:
+                # expand=False 仅拉取轻量引用，速度快流量小
+                async for pet in client.list('pet', expand=False):
+                    name = getattr(pet, 'name', '')
+                    pet_id = getattr(pet, 'id', None)
+                    if name and pet_id:
+                        self._pet_name_map[name] = pet_id
+            self._map_loaded = True
+            logger.info(f"精灵名称索引加载完成，共 {len(self._pet_name_map)} 只精灵")
+        except Exception as e:
+            logger.error(f"加载精灵名称索引失败: {e}", exc_info=True)
+            raise
+
+    async def _get_pet_id_by_name(self, pet_name: str) -> int | None:
+        """根据精灵名称查找ID，支持精确匹配"""
+        await self._load_pet_name_map()
+        # 精确匹配
+        if pet_name in self._pet_name_map:
+            return self._pet_name_map[pet_name]
+        # 模糊匹配（包含）
+        for name, pid in self._pet_name_map.items():
+            if pet_name in name:
+                return pid
+        return None
+
+    async def _get_pet_detail(self, pet_name: str):
+        """
+        根据精灵名称获取完整详情对象
+        :return: (精灵详情对象, 匹配到的精灵名称)
+        """
+        pet_id = await self._get_pet_id_by_name(pet_name)
+        if not pet_id:
+            return None, pet_name
+        
+        async with SeerAPI() as client:
+            pet = await client.get('pet', id=pet_id)
+            return pet, getattr(pet, 'name', pet_name)
 
     @filter.command("精灵")
     async def query_pet(self, event: AstrMessageEvent):
@@ -21,29 +67,23 @@ class SeerPlugin(Star):
             yield event.plain_result("请输入精灵名称，例如：/精灵 谱尼")
             return
 
-        pet_name = message.strip()
         try:
-            async with SeerAPI() as client:
-                result = await client.get_by_name('pet', pet_name)
-                if not result.data:
-                    yield event.plain_result(f"未找到名为「{pet_name}」的精灵，请检查名称是否正确")
-                    return
-
-                # 取第一个匹配结果
-                pet_id = list(result.data.keys())[0]
-                pet = result.data[pet_id]
-                reply = self._format_pet_info(pet)
-                yield event.plain_result(reply)
-
+            pet, match_name = await self._get_pet_detail(message)
+            if not pet:
+                yield event.plain_result(f"未找到名为「{message}」的精灵，请检查名称是否正确")
+                return
+            
+            reply = self._format_basic_and_race(pet)
+            yield event.plain_result(reply)
         except HTTPStatusError as e:
-            logger.error(f"SeerAPI HTTP错误: 状态码 {e.response.status_code}, 响应: {e.response.text}")
-            yield event.plain_result(f"查询失败，API返回错误码 {e.response.status_code}，请稍后再试")
+            logger.error(f"SeerAPI HTTP错误: 状态码 {e.response.status_code}")
+            yield event.plain_result(f"查询失败，API返回错误码 {e.response.status_code}")
         except Exception as e:
             logger.error(f"精灵查询异常: {e}", exc_info=True)
             yield event.plain_result(f"查询出错：{str(e)}")
 
     @filter.command("魂印")
-    async def query_soulmark(self, event: AstrMessageEvent):
+    async def query_soul_print(self, event: AstrMessageEvent):
         '''
         查询赛尔号精灵专属魂印
         用法：/魂印 精灵名称
@@ -54,29 +94,23 @@ class SeerPlugin(Star):
             yield event.plain_result("请输入精灵名称，例如：/魂印 谱尼")
             return
 
-        name = message.strip()
         try:
-            async with SeerAPI() as client:
-                result = await client.get_by_name('soulmark', name)
-                if not result.data:
-                    yield event.plain_result(f"未找到「{name}」对应的魂印信息，请检查名称是否正确")
-                    return
-
-                # 取第一个匹配结果
-                soulmark_id = list(result.data.keys())[0]
-                soulmark = result.data[soulmark_id]
-                reply = self._format_soulmark(soulmark)
-                yield event.plain_result(reply)
-
+            pet, match_name = await self._get_pet_detail(message)
+            if not pet:
+                yield event.plain_result(f"未找到名为「{message}」的精灵，请检查名称是否正确")
+                return
+            
+            reply = self._format_soul_print(pet, match_name)
+            yield event.plain_result(reply)
         except HTTPStatusError as e:
-            logger.error(f"SeerAPI HTTP错误: 状态码 {e.response.status_code}, 响应: {e.response.text}")
-            yield event.plain_result(f"查询失败，API返回错误码 {e.response.status_code}，请稍后再试")
+            logger.error(f"SeerAPI HTTP错误: 状态码 {e.response.status_code}")
+            yield event.plain_result(f"查询失败，API返回错误码 {e.response.status_code}")
         except Exception as e:
             logger.error(f"魂印查询异常: {e}", exc_info=True)
             yield event.plain_result(f"查询出错：{str(e)}")
 
     @filter.command("刻印")
-    async def query_mintmark(self, event: AstrMessageEvent):
+    async def query_engraving(self, event: AstrMessageEvent):
         '''
         查询赛尔号精灵专属刻印数值
         用法：/刻印 精灵名称
@@ -87,49 +121,46 @@ class SeerPlugin(Star):
             yield event.plain_result("请输入精灵名称，例如：/刻印 谱尼")
             return
 
-        name = message.strip()
         try:
-            async with SeerAPI() as client:
-                result = await client.get_by_name('mintmark', name)
-                if not result.data:
-                    yield event.plain_result(f"未找到「{name}」对应的刻印信息，请检查名称是否正确")
-                    return
-
-                reply = self._format_mintmark(result.data, name)
-                yield event.plain_result(reply)
-
+            pet, match_name = await self._get_pet_detail(message)
+            if not pet:
+                yield event.plain_result(f"未找到名为「{message}」的精灵，请检查名称是否正确")
+                return
+            
+            reply = self._format_engraving(pet, match_name)
+            yield event.plain_result(reply)
         except HTTPStatusError as e:
-            logger.error(f"SeerAPI HTTP错误: 状态码 {e.response.status_code}, 响应: {e.response.text}")
-            yield event.plain_result(f"查询失败，API返回错误码 {e.response.status_code}，请稍后再试")
+            logger.error(f"SeerAPI HTTP错误: 状态码 {e.response.status_code}")
+            yield event.plain_result(f"查询失败，API返回错误码 {e.response.status_code}")
         except Exception as e:
             logger.error(f"刻印查询异常: {e}", exc_info=True)
             yield event.plain_result(f"查询出错：{str(e)}")
 
-    def _format_pet_info(self, pet) -> str:
-        """格式化精灵基础信息+种族值"""
+    def _format_basic_and_race(self, pet) -> str:
+        """格式化：基础信息 + 种族值"""
         lines = []
         lines.append("=== 📖 精灵基础信息 ===")
         lines.append(f"精灵ID：{getattr(pet, 'id', '未知')}")
-        lines.append(f"精灵名称：{getattr(pet, 'name', getattr(pet, 'pet_name', '未知'))}")
+        lines.append(f"精灵名称：{getattr(pet, 'name', '未知')}")
 
         # 属性字段兼容
-        element = getattr(pet, 'element', None) or getattr(pet, 'type', getattr(pet, 'pet_type', '未知'))
+        element = getattr(pet, 'element', None) or getattr(pet, 'type', '未知')
         if isinstance(element, list):
             element = '·'.join(element)
         lines.append(f"精灵属性：{element}")
 
-        gender = getattr(pet, 'gender', getattr(pet, 'pet_gender', '未知'))
+        gender = getattr(pet, 'gender', '未知')
         lines.append(f"性别：{gender}")
         lines.append("")
 
         lines.append("=== ⚔️ 种族值 ===")
-        # 优先直接字段，兼容前缀命名和嵌套对象
-        hp = getattr(pet, 'hp', getattr(pet, 'pet_hp', '-'))
-        atk = getattr(pet, 'atk', getattr(pet, 'pet_atk', '-'))
-        def_ = getattr(pet, 'def', getattr(pet, 'pet_def', '-'))
-        spatk = getattr(pet, 'spatk', getattr(pet, 'pet_spatk', '-'))
-        spdef = getattr(pet, 'spdef', getattr(pet, 'pet_spdef', '-'))
-        spd = getattr(pet, 'spd', getattr(pet, 'pet_spd', '-'))
+        # 种族值兼容：直接字段 / 嵌套对象
+        hp = getattr(pet, 'hp', '-')
+        atk = getattr(pet, 'atk', '-')
+        def_ = getattr(pet, 'def', '-')
+        spatk = getattr(pet, 'spatk', '-')
+        spdef = getattr(pet, 'spdef', '-')
+        spd = getattr(pet, 'spd', '-')
 
         if hp != '-' or atk != '-':
             lines.append(f"体力：{hp}")
@@ -169,51 +200,79 @@ class SeerPlugin(Star):
 
         return '\n'.join(lines)
 
-    def _format_soulmark(self, soulmark) -> str:
-        """格式化魂印信息，参考 skill_effect 命名规则"""
+    def _format_soul_print(self, pet, pet_name: str) -> str:
+        """格式化：专属魂印（从精灵对象提取）"""
         lines = []
-        lines.append("=== 💠 专属魂印 ===")
+        lines.append(f"=== 💠 {pet_name} · 专属魂印 ===")
 
-        name = getattr(soulmark, 'name', getattr(soulmark, 'soulmark_name', '专属特性'))
-        lines.append(f"魂印名称：{name}")
+        # 多字段兼容
+        soul_print = (
+            getattr(pet, 'soul_print', None)
+            or getattr(pet, 'soul_seal', None)
+            or getattr(pet, 'soulmark', None)
+            or getattr(pet, 'feature', None)
+        )
 
-        # 优先前缀命名（对齐 skill_effect 风格），再兼容通用字段
-        effect = getattr(soulmark, 'soulmark_effect', None)
-        if not effect:
-            effect = getattr(soulmark, 'effect', getattr(soulmark, 'description', '暂无描述'))
-        lines.append(f"效果：{effect}")
+        if soul_print:
+            soul_name = getattr(soul_print, 'name', getattr(soul_print, 'title', '专属特性'))
+            lines.append(f"魂印名称：{soul_name}")
+            # 效果字段兼容
+            effect = (
+                getattr(soul_print, 'effect', None)
+                or getattr(soul_print, 'description', None)
+                or getattr(soul_print, 'soulmark_effect', None)
+                or '暂无描述'
+            )
+            lines.append(f"效果：{effect}")
+        else:
+            # 尝试直接挂在精灵对象上的文本
+            direct_effect = getattr(pet, 'soul_print_effect', None) or getattr(pet, 'feature_desc', None)
+            if direct_effect:
+                lines.append(direct_effect)
+            else:
+                lines.append("该精灵暂无专属魂印数据")
 
         return '\n'.join(lines)
 
-    def _format_mintmark(self, data: dict, query_name: str) -> str:
-        """格式化刻印数值，支持多刻印结果"""
+    def _format_engraving(self, pet, pet_name: str) -> str:
+        """格式化：专属刻印数值（从精灵对象提取）"""
         lines = []
-        lines.append(f"=== 🎖️ {query_name} · 专属刻印 ===")
+        lines.append(f"=== 🎖️ {pet_name} · 专属刻印 ===")
+
+        # 多字段兼容
+        engravings = (
+            getattr(pet, 'engravings', None)
+            or getattr(pet, 'stamps', None)
+            or getattr(pet, 'seals', None)
+            or getattr(pet, 'mintmark', None)
+            or getattr(pet, 'exclusive_engraving', None)
+        )
 
         stat_map = {
             'hp': '体力', 'atk': '攻击', 'def': '防御',
             'spatk': '特攻', 'spdef': '特防', 'spd': '速度'
         }
 
-        for idx, (mid, mintmark) in enumerate(data.items(), 1):
-            eng_name = getattr(mintmark, 'name', getattr(mintmark, 'mintmark_name', f'专属刻印{idx}'))
-            lines.append(f"【{eng_name}】")
+        if engravings and isinstance(engravings, list) and len(engravings) > 0:
+            for i, eng in enumerate(engravings[:3], 1):
+                eng_name = getattr(eng, 'name', f'专属刻印{i}')
+                lines.append(f"【{eng_name}】")
 
-            has_stat = False
-            for stat_key, stat_name in stat_map.items():
-                # 优先前缀字段，再兼容直接字段
-                val = getattr(mintmark, f'mintmark_{stat_key}', None)
-                if val is None:
-                    val = getattr(mintmark, stat_key, None)
-                if val and val != 0:
-                    lines.append(f"  {stat_name}：+{val}")
-                    has_stat = True
+                has_stat = False
+                for stat_key, stat_name in stat_map.items():
+                    val = getattr(eng, stat_key, None)
+                    if val and val != 0:
+                        lines.append(f"  {stat_name}：+{val}")
+                        has_stat = True
 
-            if not has_stat:
-                lines.append("  暂无数值数据")
-            lines.append("")
+                if not has_stat:
+                    lines.append("  暂无数值数据")
+                lines.append("")
+        else:
+            lines.append("暂无专属刻印数据")
 
         return '\n'.join(lines)
 
     async def terminate(self):
-        pass
+        self._pet_name_map.clear()
+        self._map_loaded = False
