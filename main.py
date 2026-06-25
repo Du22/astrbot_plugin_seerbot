@@ -7,7 +7,7 @@ from seerapi import SeerAPI
 class SeerSpriteQuery(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.api_client = SeerAPI()
+        # 移除全局客户端实例，改为每次请求独立创建
 
     @filter.command("精灵")
     async def query_sprite(self, event: AstrMessageEvent, sprite_name: str = ""):
@@ -17,7 +17,8 @@ class SeerSpriteQuery(Star):
             return
 
         try:
-            async with self.api_client as client:
+            # 每次查询新建客户端，上下文结束后自动销毁，避免连接关闭问题
+            async with SeerAPI() as client:
                 # 直接调用 GET /v1/pet/{name} 接口，通过名称一步获取精灵详情
                 pet_detail = await client.get("pet", sprite_name, expand=True)
 
@@ -87,7 +88,8 @@ class SeerSpriteQuery(Star):
             return
 
         try:
-            async with self.api_client as client:
+            # 每次查询新建客户端，上下文结束后自动销毁
+            async with SeerAPI() as client:
                 # 调用官方 GET /v1/mintmark/{name} 接口，通过名称获取刻印详情
                 mintmark_detail = await client.get("mintmark", mintmark_name)
 
