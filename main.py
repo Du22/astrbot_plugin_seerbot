@@ -1,18 +1,13 @@
-import asyncio
-import requests
-import re
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api.message_components import Plain
+from seerapi import SeerAPI
 
 
 class SeerSpriteQuery(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.wiki_api = "https://wiki.biligame.com/seer/api.php"
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-        }
+        self.api_client = SeerAPI()
 
     @filter.command("精灵")
     async def query_sprite(self, event: AstrMessageEvent, sprite_name: str = ""):
@@ -22,266 +17,111 @@ class SeerSpriteQuery(Star):
             return
 
         try:
-            def _fetch_data():
-                # ========== 1. 搜索匹配词条（修复参数兼容问题） ==========
-                search_resp = requests.get(
-                    self.wiki_api,
-                    params={
-                        "action": "query",
-                        "list": "search",
-                        "srsearch": sprite_name,
-                        "srnamespace": "0",  # 仅搜索主命名空间（词条页）
-                        "srlimit": "3",
-                        "format": "json"
-                    },
-                    headers=self.headers,
-                    timeout=10
-                )
-                search_resp.raise_for_status()
-                search_data = search_resp.json()
+            async with self.api_client as client:
+                # 直接调用 GET /v1/pet/{name} 接口，通过名称一步获取精灵详情
+                pet_detail = await client.get("pet", sprite_name, expand=True)
 
-                # 新增：接口错误校验，避免 KeyError
-                if "error" in search_data:
-                    raise RuntimeError(f"搜索接口错误：{search_data['error'].get('info', '未知错误')}")
-                if "query" not in search_data or not search_data["query"]["search"]:
-                    # 降级：使用 opensearch 二次尝试
-                    return self._fallback_search(sprite_name)
+                # ========== 基础信息 ==========
+                info_text = "===== 赛尔号精灵图鉴 =====\n"
+                info_text += f"名称：{pet_detail.name}\n"
+                info_text += f"精灵ID：{pet_detail.id}\n"
 
-                page_title = search_data["query"]["search"][0]["title"]
+                # 属性：关联资源对象，expand 后可直接读取 name
+                try:
+                    attr_name = pet_detail.type.name
+                except:
+                    attr_name = f"类型ID:{pet_detail.type.id}"
+                info_text += f"属性：{attr_name}\n"
 
-                # ========== 2. 获取页面解析内容 ==========
-                parse_resp = requests.get(
-                    self.wiki_api,
-                    params={
-                        "action": "parse",
-                        "page": page_title,
-                        "format": "json",
-                        "prop": "text",
-                        "disableeditsection": "1",
-                        "redirects": "1"  # 自动跟随重定向
-                    },
-                    headers=self.headers,
-                    timeout=12
-                )
-                parse_resp.raise_for_status()
-                parse_data = parse_resp.json()
+                # 性别：关联资源对象，为空则显示“无”
+                try:
+                    gender_name = pet_detail.gender.name if pet_detail.gender else "无"
+                except:
+                    gender_name = "无"
+                info_text += f"性别：{gender_name}\n"
 
-                if "error" in parse_data:
-                    raise RuntimeError(f"页面解析错误：{parse_data['error'].get('info', '未知错误')}")
+                # 进化链索引（完整进化链需额外调用进化接口，当前仅返回阶段索引）
+                info_text += f"进化阶段：第{pet_detail.evolution_chain_index + 1}阶\n\n"
 
-                html = parse_data["parse"]["text"]["*"]
+                # ========== 种族值 ==========
+                # 字段对齐官方 base_stats 结构，def 为 Python 关键字，必须用 getattr 访问
+                stats = pet_detail.base_stats
+                hp = stats.hp
+                atk = stats.atk
+                # 修复：用 getattr 替代 stats.def，避免语法错误
+                df = stats.def_ if hasattr(stats, 'def_') else getattr(stats, 'def', 0)
+                spatk = stats.sp_atk
+                spdf = stats.sp_def
+                speed = stats.spd
+                total = stats.total  # 官方已内置总和字段，无需手动计算
 
-                # ========== 3. 通用工具函数 ==========
-                def clean_text(raw: str) -> str:
-                    raw = re.sub(r"<[^>]+>", "", raw)
-                    raw = raw.replace("&nbsp;", " ").replace("&amp;", "&")
-                    return raw.strip()
+                info_text += "【种族值】\n"
+                info_text += f"体力{hp:3d} 攻击{atk:3d} | 防御{df:3d}\n"
+                info_text += f"特攻{spatk:3d} 特防{spdf:3d} | 速度{speed:3d}\n"
+                info_text += f"种族总和：{total}"
 
-                # ========== 4. 提取 infobox 基础信息 ==========
-                info = {"name": page_title}
-                info_rows = re.findall(
-                    r"<tr[^>]*>\s*<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>\s*</tr>",
-                    html, re.S
-                )
-                for label, value in info_rows:
-                    label = clean_text(label)
-                    value = clean_text(value)
-                    if not label or not value:
-                        continue
-                    if "编号" in label or "ID" in label:
-                        info["id"] = value
-                    elif "精灵属性" in label or ("属性" in label and "精灵" not in label and len(label) < 6):
-                        info["attr"] = value
-                    elif "性别" in label:
-                        info["gender"] = value
-                    elif "进化" in label:
-                        info["evolve"] = value[:60]
-                    elif "获得" in label or "获取" in label:
-                        info["getway"] = value[:60]
+                # ========== 魂印 ==========
+                info_text += "\n\n【魂印】\n"
+                try:
+                    # 调用官方 GET /v1/soulmark/{name} 接口，通过精灵名称获取魂印详情
+                    soulmark_detail = await client.get("soulmark", sprite_name)
+                    sm_name = getattr(soulmark_detail, 'name', "未知魂印")
+                    sm_desc = getattr(soulmark_detail, 'description', "暂无效果描述")
+                    info_text += f"名称：{sm_name}\n"
+                    info_text += f"效果：{sm_desc}"
+                except Exception:
+                    # 接口报错（精灵无魂印、名称不匹配、404）时友好提示，不中断主查询
+                    info_text += "该精灵无魂印"
 
-                # ========== 5. 提取种族值 ==========
-                race = {"hp": 0, "atk": 0, "def": 0, "spatk": 0, "spdef": 0, "speed": 0}
-                race_patterns = [
-                    ("hp", r"体力[^0-9]{0,10}(\d+)"),
-                    ("atk", r"攻击[^0-9]{0,10}(\d+)"),
-                    ("def", r"防御[^0-9]{0,10}(\d+)"),
-                    ("spatk", r"特攻[^0-9]{0,10}(\d+)"),
-                    ("spdef", r"特防[^0-9]{0,10}(\d+)"),
-                    ("speed", r"速度[^0-9]{0,10}(\d+)"),
-                ]
-                for key, pattern in race_patterns:
-                    match = re.search(pattern, html, re.S)
-                    if match:
-                        race[key] = int(match.group(1))
-
-                # ========== 6. 提取前5个技能 ==========
-                skills = []
-                skill_rows = re.findall(
-                    r"<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>",
-                    html, re.S
-                )
-                for row in skill_rows:
-                    name = clean_text(row[0])
-                    attr = clean_text(row[1])
-                    power = clean_text(row[2])
-                    # 严格过滤表头和无效行
-                    if not name or len(name) > 15 or "技能" in name or "名称" in name or "威力" in name:
-                        continue
-                    # 过滤纯数字/纯符号行
-                    if re.match(r"^[\d\W]+$", name):
-                        continue
-                    skills.append({"name": name, "attr": attr, "power": power})
-                    if len(skills) >= 5:
-                        break
-
-                return {
-                    "info": info,
-                    "race": race,
-                    "skills": skills
-                }
-
-            data = await asyncio.to_thread(_fetch_data)
         except Exception as e:
-            yield event.plain_result(f"查询失败，接口异常：{str(e)}")
+            yield event.plain_result(f"查询失败：未找到精灵「{sprite_name}」或接口异常 - {str(e)}")
             return
-
-        if not data:
-            yield event.plain_result(f"未找到精灵「{sprite_name}」，请检查名称是否完整")
-            return
-
-        # ========== 输出拼接 ==========
-        info = data["info"]
-        race = data["race"]
-        skills = data["skills"]
-
-        info_text = "===== 赛尔号精灵图鉴 =====\n"
-        info_text += f"名称：{info.get('name')}\n"
-        info_text += f"精灵ID：{info.get('id', '暂无')}\n"
-        info_text += f"属性：{info.get('attr', '未知')}\n"
-        info_text += f"性别：{info.get('gender', '无')}\n"
-        info_text += f"进化链：{info.get('evolve', '无进化')}\n"
-        info_text += f"获取途径：{info.get('getway', '暂无记录')}\n\n"
-
-        hp = race["hp"]
-        atk = race["atk"]
-        df = race["def"]
-        spatk = race["spatk"]
-        spdf = race["spdef"]
-        speed = race["speed"]
-        total = hp + atk + df + spatk + spdf + speed
-
-        info_text += "【种族值】\n"
-        info_text += f"体力{hp:3d} 攻击{atk:3d} | 防御{df:3d}\n"
-        info_text += f"特攻{spatk:3d} 特防{spdf:3d} | 速度{speed:3d}\n"
-        info_text += f"种族总和：{total}\n\n"
-
-        info_text += "【代表技能】\n"
-        if skills:
-            for sk in skills:
-                info_text += f"{sk['name']} | 属性{sk['attr']} | 威力{sk['power']}\n"
-        else:
-            info_text += "暂无技能数据\n"
 
         yield event.plain_result(info_text)
 
-    # 降级搜索方案：opensearch
-    def _fallback_search(self, sprite_name):
+    @filter.command("刻印")
+    async def query_mintmark(self, event: AstrMessageEvent, mintmark_name: str = ""):
+        '''赛尔号刻印属性查询，示例：刻印 衡·巨刃'''
+        if not mintmark_name:
+            yield event.plain_result("格式错误！正确示例：刻印 衡·巨刃")
+            return
+
         try:
-            resp = requests.get(
-                self.wiki_api,
-                params={
-                    "action": "opensearch",
-                    "search": sprite_name,
-                    "namespace": "0",
-                    "limit": "1",
-                    "format": "json"
-                },
-                headers=self.headers,
-                timeout=10
-            )
-            resp.raise_for_status()
-            result = resp.json()
-            if not result[1]:
-                return None
-            # 拿到标题后复用解析逻辑（简化版直接返回标题，外层可继续解析）
-            page_title = result[1][0]
-            
-            # 复用 parse 逻辑
-            parse_resp = requests.get(
-                self.wiki_api,
-                params={
-                    "action": "parse",
-                    "page": page_title,
-                    "format": "json",
-                    "prop": "text",
-                    "disableeditsection": "1",
-                    "redirects": "1"
-                },
-                headers=self.headers,
-                timeout=12
-            )
-            parse_resp.raise_for_status()
-            parse_data = parse_resp.json()
-            if "error" in parse_data:
-                return None
-            html = parse_data["parse"]["text"]["*"]
+            async with self.api_client as client:
+                # 调用官方 GET /v1/mintmark/{name} 接口，通过名称获取刻印详情
+                mintmark_detail = await client.get("mintmark", mintmark_name)
 
-            # 重复解析逻辑（精简）
-            def clean_text(raw: str) -> str:
-                raw = re.sub(r"<[^>]+>", "", raw)
-                raw = raw.replace("&nbsp;", " ").replace("&amp;", "&")
-                return raw.strip()
+                # ========== 基础信息 ==========
+                info_text = "===== 赛尔号刻印图鉴 =====\n"
+                info_text += f"名称：{mintmark_detail.name}\n"
+                info_text += f"刻印ID：{mintmark_detail.id}\n"
 
-            info = {"name": page_title}
-            info_rows = re.findall(
-                r"<tr[^>]*>\s*<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>\s*</tr>",
-                html, re.S
-            )
-            for label, value in info_rows:
-                label = clean_text(label)
-                value = clean_text(value)
-                if "编号" in label or "ID" in label:
-                    info["id"] = value
-                elif "属性" in label and len(label) < 6:
-                    info["attr"] = value
-                elif "性别" in label:
-                    info["gender"] = value
-                elif "进化" in label:
-                    info["evolve"] = value[:60]
-                elif "获得" in label or "获取" in label:
-                    info["getway"] = value[:60]
+                # 刻印类型，兼容关联资源与纯文本两种返回
+                try:
+                    mint_type = mintmark_detail.type.name
+                except:
+                    mint_type = getattr(mintmark_detail, 'type', "未知类型")
+                info_text += f"类型：{mint_type}\n\n"
 
-            race = {"hp": 0, "atk": 0, "def": 0, "spatk": 0, "spdef": 0, "speed": 0}
-            race_patterns = [
-                ("hp", r"体力[^0-9]{0,10}(\d+)"),
-                ("atk", r"攻击[^0-9]{0,10}(\d+)"),
-                ("def", r"防御[^0-9]{0,10}(\d+)"),
-                ("spatk", r"特攻[^0-9]{0,10}(\d+)"),
-                ("spdef", r"特防[^0-9]{0,10}(\d+)"),
-                ("speed", r"速度[^0-9]{0,10}(\d+)"),
-            ]
-            for key, pattern in race_patterns:
-                match = re.search(pattern, html, re.S)
-                if match:
-                    race[key] = int(match.group(1))
+                # ========== 刻印属性数值 ==========
+                info_text += "【刻印属性】\n"
+                # 字段命名与精灵种族值对齐，兼容 def 关键字
+                hp = getattr(mintmark_detail, 'hp', 0)
+                atk = getattr(mintmark_detail, 'atk', 0)
+                def_ = getattr(mintmark_detail, 'def_', getattr(mintmark_detail, 'def', 0))
+                sp_atk = getattr(mintmark_detail, 'sp_atk', 0)
+                sp_def = getattr(mintmark_detail, 'sp_def', 0)
+                spd = getattr(mintmark_detail, 'spd', 0)
 
-            skills = []
-            skill_rows = re.findall(
-                r"<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>",
-                html, re.S
-            )
-            for row in skill_rows:
-                name = clean_text(row[0])
-                attr = clean_text(row[1])
-                power = clean_text(row[2])
-                if not name or len(name) > 15 or "技能" in name or "名称" in name:
-                    continue
-                if re.match(r"^[\d\W]+$", name):
-                    continue
-                skills.append({"name": name, "attr": attr, "power": power})
-                if len(skills) >= 5:
-                    break
+                info_text += f"体力 +{hp}  攻击 +{atk} | 防御 +{def_}\n"
+                info_text += f"特攻 +{sp_atk}  特防 +{sp_def} | 速度 +{spd}\n"
+                
+                # 计算属性加成总和
+                total = hp + atk + def_ + sp_atk + sp_def + spd
+                info_text += f"属性总和：+{total}"
 
-            return {"info": info, "race": race, "skills": skills}
-        except:
-            return None
+        except Exception as e:
+            yield event.plain_result(f"查询失败：未找到刻印「{mintmark_name}」或接口异常 - {str(e)}")
+            return
+
+        yield event.plain_result(info_text)
