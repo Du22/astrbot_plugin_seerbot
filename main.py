@@ -1,140 +1,238 @@
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
-from astrbot.api.message_components import Plain
+from astrbot.api import logger
 from seerapi import SeerAPI
+from httpx import HTTPStatusError
 
 
-class SeerSpriteQuery(Star):
+class SeerPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
+        self.client = None
+
+    async def _get_client(self):
+        """获取或初始化 SeerAPI 客户端"""
+        if self.client is None:
+            self.client = SeerAPI()
+        return self.client
+
+    async def _get_pet_by_name(self, pet_name: str):
+        """
+        公共方法：根据精灵名称获取精灵详情对象
+        :param pet_name: 精灵名称
+        :return: 精灵详情对象
+        :raises: 未找到时返回 None
+        """
+        client = await self._get_client()
+        result = await client.get_by_name('pet', pet_name)
+        if not result.data:
+            return None
+        pet_id = list(result.data.keys())[0]
+        return await client.get('pet', pet_id)
 
     @filter.command("精灵")
-    async def query_sprite(self, event: AstrMessageEvent, sprite_name: str = ""):
-        '''赛尔号精灵图鉴查询，示例：精灵 雷伊'''
-        if not sprite_name:
-            yield event.plain_result("格式错误！正确示例：精灵 雷伊")
+    async def query_pet(self, event: AstrMessageEvent):
+        '''
+        查询赛尔号精灵基础信息与种族值
+        用法：/精灵 精灵名称
+        示例：/精灵 谱尼
+        '''
+        message = event.message_str.strip()
+        if not message:
+            yield event.plain_result("请输入精灵名称，例如：/精灵 谱尼")
             return
 
+        pet_name = message.strip()
         try:
-            # 每次请求新建客户端实例，避免连接复用导致的已关闭报错
-            async with SeerAPI() as client:
-                # 对应 GET /v1/pet/{name} 接口
-                pet_detail = await client.get("pet", sprite_name)
+            pet = await self._get_pet_by_name(pet_name)
+            if not pet:
+                yield event.plain_result(f"未找到名为「{pet_name}」的精灵，请检查名称是否正确")
+                return
 
-                # ========== 基础信息 ==========
-                info_text = "===== 赛尔号精灵图鉴 =====\n"
-                info_text += f"名称：{getattr(pet_detail, 'name', '未知')}\n"
-                info_text += f"精灵ID：{getattr(pet_detail, 'id', '未知')}\n"
+            reply = self._format_basic_and_race(pet)
+            yield event.plain_result(reply)
 
-                # 属性字段容错
-                try:
-                    attr_obj = getattr(pet_detail, 'type', None)
-                    attr_name = getattr(attr_obj, 'name', str(attr_obj)) if attr_obj else "未知"
-                except:
-                    attr_name = "未知"
-                info_text += f"属性：{attr_name}\n"
-
-                # 性别字段容错
-                try:
-                    gender_obj = getattr(pet_detail, 'gender', None)
-                    if not gender_obj:
-                        gender_name = "无"
-                    else:
-                        gender_name = getattr(gender_obj, 'name', str(gender_obj))
-                except:
-                    gender_name = "无"
-                info_text += f"性别：{gender_name}\n"
-
-                # 进化阶段容错
-                try:
-                    evolve_idx = getattr(pet_detail, 'evolution_chain_index', 0)
-                    evolve_stage = f"第{evolve_idx + 1}阶"
-                except:
-                    evolve_stage = "未知"
-                info_text += f"进化阶段：{evolve_stage}\n\n"
-
-                # ========== 种族值 ==========
-                info_text += "【种族值】\n"
-                try:
-                    stats = getattr(pet_detail, 'base_stats', None)
-                    if stats:
-                        hp = getattr(stats, 'hp', 0)
-                        atk = getattr(stats, 'atk', 0)
-                        # 兼容 def 关键字字段
-                        df = getattr(stats, 'def_', getattr(stats, 'def', 0))
-                        sp_atk = getattr(stats, 'sp_atk', 0)
-                        sp_def = getattr(stats, 'sp_def', 0)
-                        spd = getattr(stats, 'spd', 0)
-                        total = getattr(stats, 'total', hp + atk + df + sp_atk + sp_def + spd)
-
-                        info_text += f"体力{hp:3d} 攻击{atk:3d} | 防御{df:3d}\n"
-                        info_text += f"特攻{sp_atk:3d} 特防{sp_def:3d} | 速度{spd:3d}\n"
-                        info_text += f"种族总和：{total}"
-                    else:
-                        info_text += "暂无种族值数据"
-                except Exception:
-                    info_text += "种族值数据解析失败"
-
-                # ========== 魂印 ==========
-                info_text += "\n\n【魂印】\n"
-                try:
-                    # 对应 GET /v1/soulmark/{name} 接口，传入精灵名称
-                    soulmark_detail = await client.get("soulmark", sprite_name)
-                    sm_name = getattr(soulmark_detail, 'name', "未知魂印")
-                    sm_desc = getattr(soulmark_detail, 'description', "暂无效果描述")
-                    info_text += f"名称：{sm_name}\n"
-                    info_text += f"效果：{sm_desc}"
-                except Exception:
-                    info_text += "该精灵无魂印"
-
+        except HTTPStatusError as e:
+            logger.error(f"SeerAPI 请求错误: {e}")
+            yield event.plain_result("查询失败，API服务暂时不可用，请稍后再试")
         except Exception as e:
-            yield event.plain_result(f"查询失败：未找到精灵「{sprite_name}」或接口异常 - {str(e)}")
+            logger.error(f"精灵查询异常: {e}")
+            yield event.plain_result(f"查询出错：{str(e)}")
+
+    @filter.command("魂印")
+    async def query_soul_print(self, event: AstrMessageEvent):
+        '''
+        查询赛尔号精灵专属魂印
+        用法：/魂印 精灵名称
+        示例：/魂印 谱尼
+        '''
+        message = event.message_str.strip()
+        if not message:
+            yield event.plain_result("请输入精灵名称，例如：/魂印 谱尼")
             return
 
-        yield event.plain_result(info_text)
+        pet_name = message.strip()
+        try:
+            pet = await self._get_pet_by_name(pet_name)
+            if not pet:
+                yield event.plain_result(f"未找到名为「{pet_name}」的精灵，请检查名称是否正确")
+                return
+
+            reply = self._format_soul_print(pet)
+            yield event.plain_result(reply)
+
+        except HTTPStatusError as e:
+            logger.error(f"SeerAPI 请求错误: {e}")
+            yield event.plain_result("查询失败，API服务暂时不可用，请稍后再试")
+        except Exception as e:
+            logger.error(f"魂印查询异常: {e}")
+            yield event.plain_result(f"查询出错：{str(e)}")
 
     @filter.command("刻印")
-    async def query_mintmark(self, event: AstrMessageEvent, mintmark_name: str = ""):
-        '''赛尔号刻印属性查询，示例：刻印 衡·巨刃'''
-        if not mintmark_name:
-            yield event.plain_result("格式错误！正确示例：刻印 衡·巨刃")
+    async def query_engraving(self, event: AstrMessageEvent):
+        '''
+        查询赛尔号精灵专属刻印数值
+        用法：/刻印 精灵名称
+        示例：/刻印 谱尼
+        '''
+        message = event.message_str.strip()
+        if not message:
+            yield event.plain_result("请输入精灵名称，例如：/刻印 谱尼")
             return
 
+        pet_name = message.strip()
         try:
-            async with SeerAPI() as client:
-                # 对应 GET /v1/mintmark/{name} 接口
-                mintmark_detail = await client.get("mintmark", mintmark_name)
+            pet = await self._get_pet_by_name(pet_name)
+            if not pet:
+                yield event.plain_result(f"未找到名为「{pet_name}」的精灵，请检查名称是否正确")
+                return
 
-                # ========== 基础信息 ==========
-                info_text = "===== 赛尔号刻印图鉴 =====\n"
-                info_text += f"名称：{getattr(mintmark_detail, 'name', '未知')}\n"
-                info_text += f"刻印ID：{getattr(mintmark_detail, 'id', '未知')}\n"
+            reply = self._format_engraving(pet)
+            yield event.plain_result(reply)
 
-                # 刻印类型容错
-                try:
-                    type_obj = getattr(mintmark_detail, 'type', None)
-                    type_name = getattr(type_obj, 'name', str(type_obj)) if type_obj else "未知"
-                except:
-                    type_name = "未知"
-                info_text += f"类型：{type_name}\n\n"
-
-                # ========== 刻印属性数值 ==========
-                info_text += "【刻印属性】\n"
-                hp = getattr(mintmark_detail, 'hp', 0)
-                atk = getattr(mintmark_detail, 'atk', 0)
-                # 兼容 def 关键字字段
-                def_ = getattr(mintmark_detail, 'def_', getattr(mintmark_detail, 'def', 0))
-                sp_atk = getattr(mintmark_detail, 'sp_atk', 0)
-                sp_def = getattr(mintmark_detail, 'sp_def', 0)
-                spd = getattr(mintmark_detail, 'spd', 0)
-                total = hp + atk + def_ + sp_atk + sp_def + spd
-
-                info_text += f"体力 +{hp}  攻击 +{atk} | 防御 +{def_}\n"
-                info_text += f"特攻 +{sp_atk}  特防 +{sp_def} | 速度 +{spd}\n"
-                info_text += f"属性总和：+{total}"
-
+        except HTTPStatusError as e:
+            logger.error(f"SeerAPI 请求错误: {e}")
+            yield event.plain_result("查询失败，API服务暂时不可用，请稍后再试")
         except Exception as e:
-            yield event.plain_result(f"查询失败：未找到刻印「{mintmark_name}」或接口异常 - {str(e)}")
-            return
+            logger.error(f"刻印查询异常: {e}")
+            yield event.plain_result(f"查询出错：{str(e)}")
 
-        yield event.plain_result(info_text)
+    def _format_basic_and_race(self, pet) -> str:
+        """格式化：基础信息 + 种族值"""
+        lines = []
+        lines.append("=== 📖 精灵基础信息 ===")
+        lines.append(f"精灵ID：{getattr(pet, 'id', '未知')}")
+        lines.append(f"精灵名称：{getattr(pet, 'name', '未知')}")
+
+        element = getattr(pet, 'element', None) or getattr(pet, 'type', '未知')
+        if isinstance(element, list):
+            element = '·'.join(element)
+        lines.append(f"精灵属性：{element}")
+
+        gender = getattr(pet, 'gender', '未知')
+        lines.append(f"性别：{gender}")
+        lines.append("")
+
+        lines.append("=== ⚔️ 种族值 ===")
+        stats = getattr(pet, 'base_stats', None) or getattr(pet, 'race_value', None)
+
+        if stats:
+            hp = getattr(stats, 'hp', getattr(stats, '体力', '-'))
+            atk = getattr(stats, 'atk', getattr(stats, '攻击', '-'))
+            def_ = getattr(stats, 'def_', getattr(stats, '防御', '-'))
+            spatk = getattr(stats, 'spatk', getattr(stats, '特攻', '-'))
+            spdef = getattr(stats, 'spdef', getattr(stats, '特防', '-'))
+            spd = getattr(stats, 'spd', getattr(stats, '速度', '-'))
+
+            lines.append(f"体力：{hp}")
+            lines.append(f"攻击：{atk}")
+            lines.append(f"防御：{def_}")
+            lines.append(f"特攻：{spatk}")
+            lines.append(f"特防：{spdef}")
+            lines.append(f"速度：{spd}")
+
+            try:
+                total = sum(int(x) for x in [hp, atk, def_, spatk, spdef, spd] if str(x).isdigit())
+                lines.append(f"总和：{total}")
+            except:
+                pass
+        else:
+            hp = getattr(pet, 'hp', '-')
+            atk = getattr(pet, 'atk', '-')
+            def_ = getattr(pet, 'def_', '-')
+            spatk = getattr(pet, 'spatk', '-')
+            spdef = getattr(pet, 'spdef', '-')
+            spd = getattr(pet, 'spd', '-')
+
+            if hp != '-' or atk != '-':
+                lines.append(f"体力：{hp}")
+                lines.append(f"攻击：{atk}")
+                lines.append(f"防御：{def_}")
+                lines.append(f"特攻：{spatk}")
+                lines.append(f"特防：{spdef}")
+                lines.append(f"速度：{spd}")
+            else:
+                lines.append("暂无种族值数据")
+
+        return '\n'.join(lines)
+
+    def _format_soul_print(self, pet) -> str:
+        """格式化：专属魂印"""
+        lines = []
+        pet_name = getattr(pet, 'name', '未知')
+        lines.append(f"=== 💠 {pet_name} · 专属魂印 ===")
+
+        soul_print = getattr(pet, 'soul_print', None) or getattr(pet, 'soul_seal', None)
+
+        if soul_print:
+            soul_name = getattr(soul_print, 'name', getattr(soul_print, 'title', '专属特性'))
+            lines.append(f"魂印名称：{soul_name}")
+            soul_effect = getattr(soul_print, 'effect', getattr(soul_print, 'description', '暂无描述'))
+            lines.append(f"效果：{soul_effect}")
+        else:
+            soul_effect = getattr(pet, 'soul_print_effect', None)
+            if soul_effect:
+                lines.append(soul_effect)
+            else:
+                lines.append("该精灵暂无专属魂印")
+
+        return '\n'.join(lines)
+
+    def _format_engraving(self, pet) -> str:
+        """格式化：专属刻印数值"""
+        lines = []
+        pet_name = getattr(pet, 'name', '未知')
+        lines.append(f"=== 🎖️ {pet_name} · 专属刻印 ===")
+
+        engravings = getattr(pet, 'engravings', None) or getattr(pet, 'stamps', None) or getattr(pet, 'seal', None)
+
+        if engravings and isinstance(engravings, list) and len(engravings) > 0:
+            stat_name_map = {
+                'hp': '体力', 'atk': '攻击', 'def_': '防御',
+                'spatk': '特攻', 'spdef': '特防', 'spd': '速度'
+            }
+
+            for i, eng in enumerate(engravings[:3], 1):
+                eng_name = getattr(eng, 'name', f'刻印{i}')
+                lines.append(f"【{eng_name}】")
+
+                has_stat = False
+                for stat in ['hp', 'atk', 'def_', 'spatk', 'spdef', 'spd']:
+                    val = getattr(eng, stat, None)
+                    if val and val != 0:
+                        lines.append(f"  {stat_name_map[stat]}：+{val}")
+                        has_stat = True
+
+                if not has_stat:
+                    lines.append("  暂无数值数据")
+                lines.append("")
+        else:
+            lines.append("暂无专属刻印数据")
+
+        return '\n'.join(lines)
+
+    async def terminate(self):
+        """插件卸载时清理资源"""
+        if self.client:
+            await self.client.aclose()
+            self.client = None
