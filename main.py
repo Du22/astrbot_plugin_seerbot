@@ -23,15 +23,15 @@ class SeerSpriteQuery(Star):
 
         try:
             def _fetch_data():
-                # 1. 搜索匹配词条，自动处理重定向
+                # ========== 1. 搜索匹配词条（修复参数兼容问题） ==========
                 search_resp = requests.get(
                     self.wiki_api,
                     params={
                         "action": "query",
                         "list": "search",
                         "srsearch": sprite_name,
-                        "srwhat": "title",
-                        "srlimit": 1,
+                        "srnamespace": "0",  # 仅搜索主命名空间（词条页）
+                        "srlimit": "3",
                         "format": "json"
                     },
                     headers=self.headers,
@@ -39,12 +39,17 @@ class SeerSpriteQuery(Star):
                 )
                 search_resp.raise_for_status()
                 search_data = search_resp.json()
-                if not search_data["query"]["search"]:
-                    return None
+
+                # 新增：接口错误校验，避免 KeyError
+                if "error" in search_data:
+                    raise RuntimeError(f"搜索接口错误：{search_data['error'].get('info', '未知错误')}")
+                if "query" not in search_data or not search_data["query"]["search"]:
+                    # 降级：使用 opensearch 二次尝试
+                    return self._fallback_search(sprite_name)
 
                 page_title = search_data["query"]["search"][0]["title"]
 
-                # 2. 获取页面解析内容
+                # ========== 2. 获取页面解析内容 ==========
                 parse_resp = requests.get(
                     self.wiki_api,
                     params={
@@ -52,25 +57,28 @@ class SeerSpriteQuery(Star):
                         "page": page_title,
                         "format": "json",
                         "prop": "text",
-                        "disableeditsection": 1,
-                        "redirects": 1
+                        "disableeditsection": "1",
+                        "redirects": "1"  # 自动跟随重定向
                     },
                     headers=self.headers,
                     timeout=12
                 )
                 parse_resp.raise_for_status()
-                html = parse_resp.json()["parse"]["text"]["*"]
+                parse_data = parse_resp.json()
 
-                # 3. 清理HTML工具函数
+                if "error" in parse_data:
+                    raise RuntimeError(f"页面解析错误：{parse_data['error'].get('info', '未知错误')}")
+
+                html = parse_data["parse"]["text"]["*"]
+
+                # ========== 3. 通用工具函数 ==========
                 def clean_text(raw: str) -> str:
                     raw = re.sub(r"<[^>]+>", "", raw)
                     raw = raw.replace("&nbsp;", " ").replace("&amp;", "&")
                     return raw.strip()
 
-                # 4. 提取infobox基础信息
+                # ========== 4. 提取 infobox 基础信息 ==========
                 info = {"name": page_title}
-
-                # 匹配所有infobox行
                 info_rows = re.findall(
                     r"<tr[^>]*>\s*<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>\s*</tr>",
                     html, re.S
@@ -78,45 +86,49 @@ class SeerSpriteQuery(Star):
                 for label, value in info_rows:
                     label = clean_text(label)
                     value = clean_text(value)
+                    if not label or not value:
+                        continue
                     if "编号" in label or "ID" in label:
                         info["id"] = value
-                    elif "属性" in label:
+                    elif "精灵属性" in label or ("属性" in label and "精灵" not in label and len(label) < 6):
                         info["attr"] = value
                     elif "性别" in label:
                         info["gender"] = value
                     elif "进化" in label:
-                        info["evolve"] = value[:60]  # 限制长度
+                        info["evolve"] = value[:60]
                     elif "获得" in label or "获取" in label:
                         info["getway"] = value[:60]
 
-                # 5. 提取种族值
+                # ========== 5. 提取种族值 ==========
                 race = {"hp": 0, "atk": 0, "def": 0, "spatk": 0, "spdef": 0, "speed": 0}
                 race_patterns = [
-                    ("hp", r"体力[^0-9]*(\d+)"),
-                    ("atk", r"攻击[^0-9]*(\d+)"),
-                    ("def", r"防御[^0-9]*(\d+)"),
-                    ("spatk", r"特攻[^0-9]*(\d+)"),
-                    ("spdef", r"特防[^0-9]*(\d+)"),
-                    ("speed", r"速度[^0-9]*(\d+)"),
+                    ("hp", r"体力[^0-9]{0,10}(\d+)"),
+                    ("atk", r"攻击[^0-9]{0,10}(\d+)"),
+                    ("def", r"防御[^0-9]{0,10}(\d+)"),
+                    ("spatk", r"特攻[^0-9]{0,10}(\d+)"),
+                    ("spdef", r"特防[^0-9]{0,10}(\d+)"),
+                    ("speed", r"速度[^0-9]{0,10}(\d+)"),
                 ]
                 for key, pattern in race_patterns:
                     match = re.search(pattern, html, re.S)
                     if match:
                         race[key] = int(match.group(1))
 
-                # 6. 提取前5个技能（匹配技能表格）
+                # ========== 6. 提取前5个技能 ==========
                 skills = []
-                # 匹配技能表行：技能名 | 属性 | 威力 | PP | 效果
                 skill_rows = re.findall(
-                    r"<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>",
+                    r"<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>",
                     html, re.S
                 )
                 for row in skill_rows:
                     name = clean_text(row[0])
                     attr = clean_text(row[1])
                     power = clean_text(row[2])
-                    # 过滤表头和非技能行
-                    if not name or "技能" in name or "名称" in name or len(name) > 15:
+                    # 严格过滤表头和无效行
+                    if not name or len(name) > 15 or "技能" in name or "名称" in name or "威力" in name:
+                        continue
+                    # 过滤纯数字/纯符号行
+                    if re.match(r"^[\d\W]+$", name):
                         continue
                     skills.append({"name": name, "attr": attr, "power": power})
                     if len(skills) >= 5:
@@ -137,7 +149,7 @@ class SeerSpriteQuery(Star):
             yield event.plain_result(f"未找到精灵「{sprite_name}」，请检查名称是否完整")
             return
 
-        # 拼接输出文本
+        # ========== 输出拼接 ==========
         info = data["info"]
         race = data["race"]
         skills = data["skills"]
@@ -150,7 +162,6 @@ class SeerSpriteQuery(Star):
         info_text += f"进化链：{info.get('evolve', '无进化')}\n"
         info_text += f"获取途径：{info.get('getway', '暂无记录')}\n\n"
 
-        # 种族值计算
         hp = race["hp"]
         atk = race["atk"]
         df = race["def"]
@@ -164,7 +175,6 @@ class SeerSpriteQuery(Star):
         info_text += f"特攻{spatk:3d} 特防{spdf:3d} | 速度{speed:3d}\n"
         info_text += f"种族总和：{total}\n\n"
 
-        # 代表技能
         info_text += "【代表技能】\n"
         if skills:
             for sk in skills:
@@ -173,3 +183,105 @@ class SeerSpriteQuery(Star):
             info_text += "暂无技能数据\n"
 
         yield event.plain_result(info_text)
+
+    # 降级搜索方案：opensearch
+    def _fallback_search(self, sprite_name):
+        try:
+            resp = requests.get(
+                self.wiki_api,
+                params={
+                    "action": "opensearch",
+                    "search": sprite_name,
+                    "namespace": "0",
+                    "limit": "1",
+                    "format": "json"
+                },
+                headers=self.headers,
+                timeout=10
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            if not result[1]:
+                return None
+            # 拿到标题后复用解析逻辑（简化版直接返回标题，外层可继续解析）
+            page_title = result[1][0]
+            
+            # 复用 parse 逻辑
+            parse_resp = requests.get(
+                self.wiki_api,
+                params={
+                    "action": "parse",
+                    "page": page_title,
+                    "format": "json",
+                    "prop": "text",
+                    "disableeditsection": "1",
+                    "redirects": "1"
+                },
+                headers=self.headers,
+                timeout=12
+            )
+            parse_resp.raise_for_status()
+            parse_data = parse_resp.json()
+            if "error" in parse_data:
+                return None
+            html = parse_data["parse"]["text"]["*"]
+
+            # 重复解析逻辑（精简）
+            def clean_text(raw: str) -> str:
+                raw = re.sub(r"<[^>]+>", "", raw)
+                raw = raw.replace("&nbsp;", " ").replace("&amp;", "&")
+                return raw.strip()
+
+            info = {"name": page_title}
+            info_rows = re.findall(
+                r"<tr[^>]*>\s*<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>\s*</tr>",
+                html, re.S
+            )
+            for label, value in info_rows:
+                label = clean_text(label)
+                value = clean_text(value)
+                if "编号" in label or "ID" in label:
+                    info["id"] = value
+                elif "属性" in label and len(label) < 6:
+                    info["attr"] = value
+                elif "性别" in label:
+                    info["gender"] = value
+                elif "进化" in label:
+                    info["evolve"] = value[:60]
+                elif "获得" in label or "获取" in label:
+                    info["getway"] = value[:60]
+
+            race = {"hp": 0, "atk": 0, "def": 0, "spatk": 0, "spdef": 0, "speed": 0}
+            race_patterns = [
+                ("hp", r"体力[^0-9]{0,10}(\d+)"),
+                ("atk", r"攻击[^0-9]{0,10}(\d+)"),
+                ("def", r"防御[^0-9]{0,10}(\d+)"),
+                ("spatk", r"特攻[^0-9]{0,10}(\d+)"),
+                ("spdef", r"特防[^0-9]{0,10}(\d+)"),
+                ("speed", r"速度[^0-9]{0,10}(\d+)"),
+            ]
+            for key, pattern in race_patterns:
+                match = re.search(pattern, html, re.S)
+                if match:
+                    race[key] = int(match.group(1))
+
+            skills = []
+            skill_rows = re.findall(
+                r"<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>",
+                html, re.S
+            )
+            for row in skill_rows:
+                name = clean_text(row[0])
+                attr = clean_text(row[1])
+                power = clean_text(row[2])
+                if not name or len(name) > 15 or "技能" in name or "名称" in name:
+                    continue
+                if re.match(r"^[\d\W]+$", name):
+                    continue
+                skills.append({"name": name, "attr": attr, "power": power})
+                if len(skills) >= 5:
+                    break
+
+            return {"info": info, "race": race, "skills": skills}
+        except:
+            return None
