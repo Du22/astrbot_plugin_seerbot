@@ -19,16 +19,11 @@ class MyPlugin(Star):
             return
         pet_name =message_str[1].strip()
         logger.info(f"开始查询精灵: {pet_name}")
-        try:
-            # 若 SeerAPI 不支持 async with，请改为 client = SeerAPI() 后手动调用
-            async with SeerAPI() as client:
-                pet = await client.get_by_name('pet', pet_name)
+        
+        # 若 SeerAPI 不支持 async with，请改为 client = SeerAPI() 后手动调用
+        async with SeerAPI() as client:
+            pet = await client.get_by_name('pet', pet_name)
             
-            # 空值判断：处理查询不到精灵的情况
-            if not pet:
-                yield event.plain_result(f"❌ 未查询到名为「{pet_name}」的精灵，请检查名称是否正确")
-                return
-
             # 构造返回消息
             reply = (
                 f"✅ 精灵查询结果\n"
@@ -37,9 +32,7 @@ class MyPlugin(Star):
             )
             yield event.plain_result(reply)
 
-        except Exception as e:
-            logger.error(f"查询精灵失败: {str(e)}")
-            yield event.plain_result(f"❌ 查询失败，接口异常，请稍后重试") # 发送一条纯文本消息
+        
     
     
 
