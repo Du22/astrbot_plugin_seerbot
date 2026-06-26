@@ -30,7 +30,7 @@ class MyPlugin(Star):
                     if resp.status != 200:
                         yield event.plain_result(f"❌ 请求失败，HTTP 状态码：{resp.status}")
                         return
-                    # 解析 JSON 响应
+                    # 解析 JSON 响应，将接口返回的 JSON 转为 Python 字典
                     result = await resp.json()
             
             logger.info(f"API 原始返回: {result}")
@@ -48,7 +48,15 @@ class MyPlugin(Star):
                 yield event.plain_result("❌ 未找到该精灵，请检查名称是否正确（需精确全名）")
                 return
 
-            # 读取精灵基础信息
+            # 兼容两种返回格式：data 是单个对象 / data 是搜索结果列表
+            if isinstance(pet_data, list):
+                if len(pet_data) == 0:
+                    yield event.plain_result("❌ 未找到匹配的精灵")
+                    return
+                # 列表格式取第一条结果
+                pet_data = pet_data[0]
+
+            # 从 JSON 数据中读取精灵基础信息
             name = pet_data.get("name", "未知")
             pet_id = pet_data.get("id", "未知")
             
