@@ -1,7 +1,8 @@
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star
 from astrbot.api import logger
-from seerapi import SeerAPI
+import aiohttp
+from urllib.parse import quote
 import asyncio
 
 class MyPlugin(Star):
@@ -20,22 +21,36 @@ class MyPlugin(Star):
         logger.info(f"开始查询精灵: {pet_name}")
 
         try:
-            # 若 async with 报错，可注释本段，改用下方同步调用写法
-            async with SeerAPI() as client:
-                pet = await client.get_by_name('skill', pet_name)
+            # 直接请求官方接口，替代第三方 SeerAPI 库
+            async with aiohttp.ClientSession() as session:
+                # 对精灵名做 URL 编码，兼容中文/特殊字符
+                url = f"https://api.seerapi.com/v1/pet/{quote(pet_name)}"
+                async with session.get(url) as resp:
+                    # 校验 HTTP 状态码
+                    if resp.status != 200:
+                        yield event.plain_result(f"❌ 请求失败，HTTP 状态码：{resp.status}")
+                        return
+                    # 解析 JSON 响应
+                    result = await resp.json()
             
-            # 调试日志：确认API返回的原始结构与类型，方便排查
-            logger.info(f"API返回原始数据: {pet}")
-            logger.info(f"返回数据类型: {type(pet)}")
+            logger.info(f"API 原始返回: {result}")
 
-            # 兼容字典和对象两种返回格式
-            if isinstance(pet, dict):
-                pet_data = pet.get('data', pet)
-                name = pet_data.get('name', '未知')
-                pet_id = pet_data.get('power', '未知')
-            else:
-                name = getattr(pet, 'name', '未知')
-                pet_id = getattr(pet, 'power', '未知')
+            # 校验接口业务状态码
+            code = result.get("code", -1)
+            if code not in (0, 200):
+                err_msg = result.get("msg", "接口返回未知错误")
+                yield event.plain_result(f"❌ 查询失败：{err_msg}")
+                return
+
+            # 安全获取 data 字段，彻底避免 KeyError 崩溃
+            pet_data = result.get("data")
+            if not pet_data:
+                yield event.plain_result("❌ 未找到该精灵，请检查名称是否正确（需精确全名）")
+                return
+
+            # 读取精灵基础信息
+            name = pet_data.get("name", "未知")
+            pet_id = pet_data.get("id", "未知")
             
             reply = (
                 f"✅ 精灵查询结果\n"
@@ -44,9 +59,9 @@ class MyPlugin(Star):
             )
             yield event.plain_result(reply)
 
-        except KeyError as e:
-            logger.error(f"API返回结构异常，缺失键: {e}")
-            yield event.plain_result("❌ 查询失败：未找到该精灵，请检查名称是否正确")
+        except aiohttp.ClientError as e:
+            logger.error(f"网络请求错误: {e}")
+            yield event.plain_result("❌ 网络异常，无法连接精灵查询接口")
         except Exception as e:
             logger.error(f"查询精灵发生错误: {type(e).__name__}: {e}", exc_info=True)
             yield event.plain_result(f"❌ 查询出错：{str(e)}\n请查看控制台日志排查详情")
