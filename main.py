@@ -15,6 +15,8 @@ STAT_TRANSLATION = {
 }
 # 种族值固定输出顺序
 STAT_ORDER = ["hp", "atk", "def", "sp_atk", "sp_def", "spd"]
+# 指令列表（用于截取参数）
+COMMAND_LIST = ["查精灵", "精灵查询", "seer"]
 # ============================
 
 class SeerPetPlugin(Star):
@@ -24,9 +26,15 @@ class SeerPetPlugin(Star):
     @filter.command("查精灵", aliases=["精灵查询", "seer"])
     async def query_pet(self, event: AstrMessageEvent):
         """赛尔号精灵查询，指令：查精灵 精灵名称"""
-        # 获取指令后的精灵名称参数
-        pet_name = event.message_str.strip()
-        
+        full_text = event.message_str.strip()
+        pet_name = ""
+
+        # 遍历所有指令前缀，截取命令后的纯精灵名称
+        for cmd in COMMAND_LIST:
+            if full_text.lower().startswith(cmd.lower()):
+                pet_name = full_text[len(cmd):].strip()
+                break
+
         if not pet_name:
             yield event.plain_result(
                 "请输入精灵名称，示例：\n查精灵 谱尼\n查精灵 圣灵谱尼"
@@ -34,7 +42,7 @@ class SeerPetPlugin(Star):
             return
 
         try:
-            # 调用 SeerAPI 查询
+            # 调用 SeerAPI，仅传入纯精灵名称，不带命令
             async with SeerAPI() as client:
                 result = await client.get_by_name("pet", pet_name)
 
