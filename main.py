@@ -22,7 +22,7 @@ class MyPlugin(Star):
         try:
             # 若 async with 报错，可注释本段，改用下方同步调用写法
             async with SeerAPI() as client:
-                pet = await client.get_by_name('pet', '帝皇之御')
+                pet = await client.get_by_name('skill', pet_name)
             
             # 调试日志：确认API返回的原始结构与类型，方便排查
             logger.info(f"API返回原始数据: {pet}")
@@ -32,10 +32,10 @@ class MyPlugin(Star):
             if isinstance(pet, dict):
                 pet_data = pet.get('data', pet)
                 name = pet_data.get('name', '未知')
-                pet_id = pet_data.get('id', '未知')
+                pet_id = pet_data.get('power', '未知')
             else:
                 name = getattr(pet, 'name', '未知')
-                pet_id = getattr(pet, 'id', '未知')
+                pet_id = getattr(pet, 'power', '未知')
             
             reply = (
                 f"✅ 精灵查询结果\n"
