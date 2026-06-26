@@ -1,49 +1,120 @@
-import requests
+from astrbot.api.star import Star, Context
+from astrbot.api.event import filter, AstrMessageEvent
+import aiohttp
 from urllib.parse import quote
 
-def get_seer_pet_id(pet_name: str):
-    """
-    调用SeerAPI精灵接口，提取resource_id（精灵ID）
-    :param pet_name: 赛尔号精灵中文名称
-    :return: 精灵ID；请求/解析失败时返回None
-    """
-    url = f"https://api.seerapi.com/v1/pet/{quote(pet_name)}"
-    
-    # 兼容部分接口要求的请求头，避免返回非JSON格式
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0"
-    }
 
-    try:
-        # 发送请求并校验状态
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
+class SeerPetQueryPlugin(Star):
+    def __init__(self, context: Context):
+        super().__init__(context)
+        self.name = "赛尔号精灵查询"
+        self.description = "调用 SeerAPI 查询赛尔号精灵详细属性与信息"
+        self.version = "1.0.0"
+        self.author = "自定义插件"
 
-        # 解析JSON响应
-        json_data = resp.json()
+    @filter.command("精灵")
+    async def query_pet_info(self, event: AstrMessageEvent):
+        '''查询赛尔号精灵信息，用法：精灵 精灵名称/精灵ID'''
+        # 提取命令参数（分割指令前缀与精灵名称）
+        message_text = event.message_str.strip()
+        parts = message_text.split(maxsplit=1)
+        
+        if len(parts) < 2:
+            yield event.plain_result("请输入要查询的精灵名称，示例：\n/精灵 圣灵谱尼")
+            return
+        
+        pet_name = parts[1].strip()
+        encoded_pet = quote(pet_name)
+        api_url = f"https://api.seerapi.com/v1/pet/{encoded_pet}"
 
-        # 兼容两种常见返回结构：
-        # 1. 顶层直接有 resource_id
-        # 2. 嵌套在 data 字段中（标准REST风格）
-        resource_id = json_data.get("resource_id")
-        if resource_id is None and "data" in json_data:
-            resource_id = json_data["data"].get("resource_id")
+        try:
+            # 异步请求接口，设置超时避免阻塞
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(api_url) as resp:
+                    if resp.status != 200:
+                        yield event.plain_result(f"查询失败：未找到精灵「{pet_name}」，请检查名称/ID是否正确")
+                        return
+                    raw_data = await resp.json()
+        except aiohttp.ClientError:
+            yield event.plain_result("网络请求失败，请检查网络连接后重试")
+            return
+        except Exception as e:
+            yield event.plain_result(f"查询异常：{str(e)}")
+            return
 
-        return resource_id
+        # 格式化数据并回复
+        formatted_msg = self._format_output(raw_data, pet_name)
+        yield event.plain_result(formatted_msg)
 
-    except requests.exceptions.RequestException as e:
-        print(f"接口请求失败: {e}")
-        return None
-    except ValueError as e:
-        print(f"返回内容不是合法JSON: {e}")
-        return None
+    def _format_output(self, raw_data, input_name):
+        """格式化接口返回数据，适配 QQ 聊天窗口展示"""
+        # 兼容接口是否有外层 data 包裹
+        pet = raw_data.get("data", raw_data)
 
-# 调用示例
-if __name__ == "__main__":
-    pet_name = "谱尼"  # 替换为目标精灵名称
-    pet_id = get_seer_pet_id(pet_name)
-    if pet_id is not None:
-        print(f"精灵「{pet_name}」的resource_id = {pet_id}")
-    else:
-        print("未能获取到精灵ID")
+        # ========== 1. 基础信息 ==========
+        stats = pet.get("stats", {})
+        try:
+            total_stats = pet.get("total_stats", sum(stats.values()))
+        except (TypeError, ValueError):
+            total_stats = "未知"
+
+        base_part = [
+            f"【精灵信息】{pet.get('name', input_name)}",
+            "─────────────────────",
+            "【基础信息】",
+            f"精灵ID：{pet.get('id', '未知')}",
+            f"属性组合ID：{pet.get('element_id', '未知')}",
+            f"性别：{pet.get('gender', '未知')}",
+            f"种族值总和：{total_stats}",
+            f"可捕捉：{'是' if pet.get('catchable') else '否'}",
+            f"可放生：{'是' if pet.get('releasable') else '否'}",
+            f"融合素材：主{'可' if pet.get('fusion_main') else '不可'}/副{'可' if pet.get('fusion_vice') else '不可'}",
+            f"抗性系统：{'是' if pet.get('has_resistance') else '否'}",
+            f"击败获得学习力：{pet.get('defeat_learning', '未知')}",
+            "─────────────────────",
+        ]
+
+        # ========== 2. 种族值明细 ==========
+        stats_part = [
+            "【种族值明细】",
+            f"体力：{stats.get('hp', '未知')}",
+            f"攻击：{stats.get('atk', '未知')}",
+            f"防御：{stats.get('def', '未知')}",
+            f"特攻：{stats.get('sp_atk', '未知')}",
+            f"特防：{stats.get('sp_def', '未知')}",
+            f"速度：{stats.get('spd', '未知')}",
+            "─────────────────────",
+        ]
+
+        # ========== 3. 技能体系 ==========
+        skills = pet.get("skills", [])
+        skill_count = len(skills)
+        fifth_skill = None
+        for skill in skills:
+            if skill.get("level", 0) >= 80:
+                fifth_skill = skill
+                break
+
+        skill_part = [
+            "【技能体系】",
+            f"共包含 {skill_count} 个等级解锁技能",
+        ]
+        if fifth_skill:
+            skill_part.append(
+                f"第五技能ID：{fifth_skill.get('id', '未知')}（{fifth_skill.get('level', '未知')}级解锁）"
+            )
+        skill_part.append("技能详情可通过技能ID单独查询")
+        skill_part.append("─────────────────────")
+
+        # ========== 4. 关联资源 ==========
+        peak_pool = "普通池" if pet.get("peak_pool_id") == 2 else "未知"
+        related_part = [
+            "【关联资源】",
+            f"魂印ID：{pet.get('soulmark_id', '无')}",
+            f"图鉴条目ID：{pet.get('dex_id', '未知')}",
+            f"档案故事ID：{pet.get('story_id', '未知')}",
+            f"巅峰归属：{peak_pool}",
+        ]
+
+        return "\n".join(base_part + stats_part + skill_part + related_part)
