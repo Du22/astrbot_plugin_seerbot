@@ -15,8 +15,8 @@ STAT_TRANSLATION = {
 }
 # 种族值固定输出顺序
 STAT_ORDER = ["hp", "atk", "def", "sp_atk", "sp_def", "spd"]
-# 指令列表（用于截取参数）
-COMMAND_LIST = ["查精灵", "精灵查询", "seer"]
+# 指令前缀列表（用于精准截取纯精灵名称）
+COMMAND_PREFIXES = ["查精灵", "精灵查询", "seer"]
 # ============================
 
 class SeerPetPlugin(Star):
@@ -29,8 +29,8 @@ class SeerPetPlugin(Star):
         full_text = event.message_str.strip()
         pet_name = ""
 
-        # 遍历所有指令前缀，截取命令后的纯精灵名称
-        for cmd in COMMAND_LIST:
+        # 精准移除命令前缀，仅保留纯精灵名称传给 API
+        for cmd in COMMAND_PREFIXES:
             if full_text.lower().startswith(cmd.lower()):
                 pet_name = full_text[len(cmd):].strip()
                 break
@@ -42,31 +42,43 @@ class SeerPetPlugin(Star):
             return
 
         try:
-            # 调用 SeerAPI，仅传入纯精灵名称，不带命令
+            # 调用 SeerAPI，第二个参数仅为纯精灵名称，不含任何命令，返回值直接赋值为 pet
             async with SeerAPI() as client:
-                result = await client.get_by_name("pet", pet_name)
+                pet = await client.get_by_name('pet', pet_name)
+               
 
-            # 未找到结果
-            if not result:
+            # 兼容 API 嵌套 data 结构，解决 'data' 键报错
+            if isinstance(pet, dict) and "data" in pet:
+                pet = pet["data"]
+
+            # 未找到结果兜底
+            if not pet:
                 yield event.plain_result(
                     f"未找到名为「{pet_name}」的精灵，请检查名称是否正确。"
                 )
                 return
             
-            # 兼容返回列表/单个对象
-            pet = result[0] if isinstance(result, list) else result
+            # 兼容返回列表/单个对象两种格式，列表取第一条结果
+            if isinstance(pet, list):
+                pet = pet[0]
 
-            # 兼容属性对象与字典两种结构
-            base_stats = pet.base_stats
+            # 兼容 base_stats 的对象属性/字典两种结构
+            if hasattr(pet, "base_stats"):
+                base_stats = pet.base_stats
+            else:
+                base_stats = pet.get("base_stats", {})
+
             if hasattr(base_stats, "__dict__"):
                 stats_dict = {
                     k: v for k, v in base_stats.__dict__.items()
                     if not k.startswith("_") and isinstance(v, (int, float))
                 }
+            elif isinstance(base_stats, dict):
+                stats_dict = base_stats
             else:
-                stats_dict = dict(base_stats)
+                stats_dict = {}
 
-            # 格式化种族值
+            # 按固定顺序格式化种族值
             stats_lines = []
             calc_total = 0
             for key in STAT_ORDER:
@@ -76,14 +88,14 @@ class SeerPetPlugin(Star):
                     stats_lines.append(f"{cn_name}：{value}")
                     calc_total += value
 
-            # 优先使用接口返回的总和，无则自动计算
+            # 优先用接口返回的总和，无则自动计算
             total = stats_dict.get("total", calc_total)
 
-            # 排版输出
+            # 统一排版输出
             reply = (
                 "===== 精灵查询结果 =====\n"
-                f"精灵名称：{pet.name}\n"
-                f"精灵ID：{pet.id}\n"
+                f"精灵名称：{pet.name if hasattr(pet, 'name') else pet.get('name', '未知')}\n"
+                f"精灵ID：{pet.id if hasattr(pet, 'id') else pet.get('id', '未知')}\n"
                 "------------------------\n"
                 "          种族值\n"
                 "------------------------\n"
@@ -94,6 +106,10 @@ class SeerPetPlugin(Star):
 
             yield event.plain_result(reply)
 
+        except KeyError as e:
+            yield event.plain_result(
+                f"API 返回结构异常：缺少字段 {str(e)}\n请确认 SeerAPI 版本或稍后重试。"
+            )
         except Exception as e:
             yield event.plain_result(
                 f"查询失败：{str(e)}\n请稍后重试，或确认精灵名称、API 服务是否正常。"
