@@ -22,7 +22,7 @@ class MyPlugin(Star):
         try:
             # 若 async with 报错，可注释本段，改用下方同步调用写法
             async with SeerAPI() as client:
-                pet = await client.get_by_name('pet', pet_name)
+                pet = await client.get_by_name('pet', '帝皇之御')
             
             # 调试日志：确认API返回的原始结构与类型，方便排查
             logger.info(f"API返回原始数据: {pet}")
