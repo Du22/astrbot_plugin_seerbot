@@ -9,7 +9,7 @@ class SeerPetQueryPlugin(Star):
         super().__init__(context)
         self.name = "赛尔号精灵查询"
         self.description = "调用 SeerAPI 查询赛尔号精灵详细属性与信息"
-        self.version = "2.0.0"
+        self.version = "1.1.0"
         self.author = "自定义插件"
 
     @filter.command("精灵")
@@ -41,80 +41,49 @@ class SeerPetQueryPlugin(Star):
             yield event.plain_result(f"查询异常：{str(e)}")
             return
 
-        # 从外层ID字典中取出内层精灵详情对象
-        if not raw_data:
-            yield event.plain_result(f"未查询到精灵「{pet_name}」的相关数据")
-            return
-        pet_detail = next(iter(raw_data.values()), {})
-        
-        formatted_msg = self._format_output(pet_detail, pet_name)
+        formatted_msg = self._format_output(raw_data, pet_name)
         yield event.plain_result(formatted_msg)
 
-    def _format_output(self, pet: dict, input_name: str) -> str:
-        """格式化精灵详情数据，适配QQ纯文本展示"""
+    def _format_output(self, raw_data, input_name):
+        # 兼容有无外层 data 包裹
+        pet = next(iter(raw_data.values()), {})
+
         # ========== 1. 基础信息 ==========
-        base_stats = pet.get("base_stats", {})
-        total_stats = base_stats.get("total", "未知")
-        
-        # 属性组合ID
-        elem_type = pet.get("type", {})
-        elem_id = elem_type.get("id", "未知")
-        
-        # 性别ID转中文
-        gender_info = pet.get("gender", {})
-        gender_id = gender_info.get("id", "未知")
-        gender_map = {0: "无性别", 1: "雄性", 2: "雌性"}
-        gender_text = gender_map.get(gender_id, f"ID:{gender_id}")
-        
-        # 击败获得学习力格式化
-        yield_ev = pet.get("yielding_ev", {})
-        ev_list = []
-        ev_name_map = {
-            "atk": "攻击", "def": "防御",
-            "sp_atk": "特攻", "sp_def": "特防",
-            "spd": "速度", "hp": "体力"
-        }
-        for k, v in yield_ev.items():
-            if k in ("percent", "total") or v == 0:
-                continue
-            ev_list.append(f"{ev_name_map.get(k, k)}+{v}")
-        ev_text = "、".join(ev_list) if ev_list else "无"
+        # 兼容多种种族值字段命名
+        stats = pet.get("base_stats", {})
+        try:
+            total_stats = pet.get("total", sum(stats.values()))
+        except (TypeError, ValueError):
+            total_stats = "未知"
 
         base_part = [
-            f"【精灵信息】{pet.get('name', input_name)}",
+            f"【精灵信息】{pet.get('name', pet.get('pet_name', input_name))}",
             "─────────────────────",
             "【基础信息】",
-            f"精灵序号：{pet.get('resource_id', '未知')}",
-            f"属性组合ID：{elem_id}",
-            f"性别：{gender_text}",
+            f"精灵序号：{pet.get('resource_id', pet.get('pet_id', '未知'))}",
             f"种族值总和：{total_stats}",
-            f"可捕捉：{'是' if pet.get('catch_rate', 0) > 0 else '否'}",
-            f"可放生：{'是' if pet.get('releaseable') else '否'}",
-            f"融合素材：主{'可' if pet.get('fusion_master') else '不可'}/副{'可' if pet.get('fusion_sub') else '不可'}",
-            f"抗性系统：{'是' if pet.get('has_resistance') else '否'}",
-            f"击败获得学习力：{ev_text}",
             "─────────────────────",
         ]
 
         # ========== 2. 种族值明细 ==========
         stats_part = [
             "【种族值明细】",
-            f"体力：{base_stats.get('hp', '未知')}",
-            f"攻击：{base_stats.get('atk', '未知')}",
-            f"防御：{base_stats.get('def', '未知')}",
-            f"特攻：{base_stats.get('sp_atk', '未知')}",
-            f"特防：{base_stats.get('sp_def', '未知')}",
-            f"速度：{base_stats.get('spd', '未知')}",
+            f"体力：{stats.get('hp', stats.get('vitality', '未知'))}",
+            f"攻击：{stats.get('atk', stats.get('attack', '未知'))}",
+            f"防御：{stats.get('def', stats.get('defense', '未知'))}",
+            f"特攻：{stats.get('sp_atk', stats.get('satk', stats.get('spatk', '未知')))}",
+            f"特防：{stats.get('sp_def', stats.get('sdef', stats.get('spdef', '未知')))}",
+            f"速度：{stats.get('spd', stats.get('speed', '未知'))}",
             "─────────────────────",
         ]
 
         # ========== 3. 技能体系 ==========
-        skills = pet.get("skill", [])
+        skills = pet.get("skills", pet.get("skill_list", []))
         skill_count = len(skills)
         fifth_skill = None
-        for sk in skills:
-            if sk.get("is_fifth"):
-                fifth_skill = sk
+        for skill in skills:
+            if skill.get("level", 0) >= 80:
+                fifth_skill = skill
                 break
 
         skill_part = [
@@ -122,27 +91,17 @@ class SeerPetQueryPlugin(Star):
             f"共包含 {skill_count} 个等级解锁技能",
         ]
         if fifth_skill:
-            sk_info = fifth_skill.get("skill", {})
             skill_part.append(
-                f"第五技能ID：{sk_info.get('id', '未知')}（{fifth_skill.get('learning_level', '未知')}级解锁）"
+                f"第五技能ID：{fifth_skill.get('id', '未知')}（{fifth_skill.get('level', '未知')}级解锁）"
             )
         skill_part.append("─────────────────────")
 
         # ========== 4. 关联资源 ==========
-        soulmarks = pet.get("soulmark", [])
-        soulmark_ids = [str(s.get("id", "")) for s in soulmarks if s.get("id")]
-        soulmark_text = "、".join(soulmark_ids) if soulmark_ids else "无"
-        
-        encyclopedia = pet.get("encyclopedia_entry", {})
-        archive = pet.get("archive_story_entry", {})
-        peak_pool = pet.get("peak_pool", {})
-
         related_part = [
             "【关联资源】",
-            f"魂印ID：{soulmark_text}",
-            f"图鉴条目ID：{encyclopedia.get('id', '未知')}",
-            f"档案故事ID：{archive.get('id', '未知')}",
-            f"巅峰归属：{'普通池' if peak_pool.get('id') == 2 else '未知'}",
+            f"魂印ID：{pet.get('soulmark_id', pet.get('soul_id', '无'))}",
+            f"图鉴ID：{pet.get('dex_id', pet.get('book_id', '未知'))}",
+            f"巅峰归属：{'普通池' if pet.get('peak_pool_id') == 2 else '未知'}",
         ]
 
         return "\n".join(base_part + stats_part + skill_part + related_part)
