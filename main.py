@@ -26,7 +26,7 @@ class SeerPetQueryPlugin(Star):
         try:
             # 调用 SeerAPI 异步查询
             async with SeerAPI() as client:
-                result = await client.get_by_name('pet', pet_name)
+                result = await client.get_by_name('pet', '圣灵谱尼')
                 reply_lines = ["🔍 赛尔号精灵查询结果", "───────────────"]
                 reply_lines.append(f"精灵名称：{result.name}")
                 reply_lines.append(f"精灵ID：{result.id}")
