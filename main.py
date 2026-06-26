@@ -27,9 +27,11 @@ class SeerPetQueryPlugin(Star):
             # 调用 SeerAPI 异步查询
             async with SeerAPI() as client:
                 result = await client.get_by_name('pet', pet_name)
-                print(f"精灵名称: {result.name}")
-                print(f"精灵ID: {result.id}")
-
+                reply_lines = ["🔍 赛尔号精灵查询结果", "───────────────"]
+                reply_lines.append(f"精灵名称：{result.name}")
+                reply_lines.append(f"精灵ID：{result.id}")
+                reply_lines.append("───────────────")
+                yield event.plain_result("\n".join(reply_lines))
         except Exception as e:
             # 全局异常捕获，避免插件崩溃
             yield event.plain_result(f"❌ 查询失败：{str(e)}\n请稍后重试或检查API服务状态")
