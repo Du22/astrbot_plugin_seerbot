@@ -50,9 +50,9 @@ class SeerPetQueryPlugin(Star):
 
         # ========== 1. 基础信息 ==========
         # 兼容多种种族值字段命名
-        stats = pet.get("stats", pet.get("race", pet.get("race_value", {})))
+        stats = pet.get("base_stats",  {})
         try:
-            total_stats = pet.get("total_stats", pet.get("race_total", sum(stats.values())))
+            total_stats = pet.get("total", sum(stats.values()))
         except (TypeError, ValueError):
             total_stats = "未知"
 
@@ -60,14 +60,8 @@ class SeerPetQueryPlugin(Star):
             f"【精灵信息】{pet.get('name', pet.get('pet_name', input_name))}",
             "─────────────────────",
             "【基础信息】",
-            f"精灵ID：{pet.get('id', pet.get('pet_id', '未知'))}",
-            f"属性ID：{pet.get('element_id', pet.get('attr_id', '未知'))}",
-            f"性别：{pet.get('gender', '未知')}",
+            f"精灵ID：{pet.get('resource_id', pet.get('pet_id', '未知'))}",
             f"种族值总和：{total_stats}",
-            f"可捕捉：{'是' if pet.get('catchable') else '否'}",
-            f"可放生：{'是' if pet.get('releasable') else '否'}",
-            f"抗性系统：{'是' if pet.get('has_resistance', pet.get('resistance')) else '否'}",
-            f"击败学习力：{pet.get('defeat_learning', pet.get('learn', '未知'))}",
             "─────────────────────",
         ]
 
