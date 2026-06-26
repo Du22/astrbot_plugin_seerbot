@@ -1,79 +1,49 @@
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
-from astrbot.api.star import Context, Star
-from astrbot.api import logger
-import aiohttp
+import requests
 from urllib.parse import quote
-import asyncio
 
-class MyPlugin(Star):
-    def __init__(self, context: Context):
-        super().__init__(context)
+def get_seer_pet_id(pet_name: str):
+    """
+    调用SeerAPI精灵接口，提取resource_id（精灵ID）
+    :param pet_name: 赛尔号精灵中文名称
+    :return: 精灵ID；请求/解析失败时返回None
+    """
+    url = f"https://api.seerapi.com/v1/pet/{quote(pet_name)}"
+    
+    # 兼容部分接口要求的请求头，避免返回非JSON格式
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
 
-    @filter.command("查精灵")
-    async def main(self, event: AstrMessageEvent):
-        '''赛尔号精灵查询指令'''
-        message_str = event.message_str.split(maxsplit=1)
-        if len(message_str) < 2 or not message_str[1].strip():
-            yield event.plain_result("⚠️ 指令参数缺失\n使用示例：/查精灵 谱尼")
-            return
-        
-        pet_name = message_str[1].strip()
-        logger.info(f"开始查询精灵: {pet_name}")
+    try:
+        # 发送请求并校验状态
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
 
-        try:
-            # 直接请求官方接口，替代第三方 SeerAPI 库
-            async with aiohttp.ClientSession() as session:
-                # 对精灵名做 URL 编码，兼容中文/特殊字符
-                url = f"https://api.seerapi.com/v1/pet/{quote(pet_name)}"
-                async with session.get(url) as resp:
-                    # 校验 HTTP 状态码
-                    if resp.status != 200:
-                        yield event.plain_result(f"❌ 请求失败，HTTP 状态码：{resp.status}")
-                        return
-                    # 解析 JSON 响应，将接口返回的 JSON 转为 Python 字典
-                    result = await resp.json()
-            
-            logger.info(f"API 原始返回: {result}")
+        # 解析JSON响应
+        json_data = resp.json()
 
-            # 校验接口业务状态码
-            code = result.get("code", -1)
-            if code not in (0, 200):
-                err_msg = result.get("msg", "接口返回未知错误")
-                yield event.plain_result(f"❌ 查询失败：{err_msg}")
-                return
+        # 兼容两种常见返回结构：
+        # 1. 顶层直接有 resource_id
+        # 2. 嵌套在 data 字段中（标准REST风格）
+        resource_id = json_data.get("resource_id")
+        if resource_id is None and "data" in json_data:
+            resource_id = json_data["data"].get("resource_id")
 
-            # 安全获取 data 字段，彻底避免 KeyError 崩溃
-            pet_data = result.get("data")
-            if not pet_data:
-                yield event.plain_result("❌ 未找到该精灵，请检查名称是否正确（需精确全名）")
-                return
+        return resource_id
 
-            # 兼容两种返回格式：data 是单个对象 / data 是搜索结果列表
-            if isinstance(pet_data, list):
-                if len(pet_data) == 0:
-                    yield event.plain_result("❌ 未找到匹配的精灵")
-                    return
-                # 列表格式取第一条结果
-                pet_data = pet_data[0]
+    except requests.exceptions.RequestException as e:
+        print(f"接口请求失败: {e}")
+        return None
+    except ValueError as e:
+        print(f"返回内容不是合法JSON: {e}")
+        return None
 
-            # 从 JSON 数据中读取精灵基础信息
-            name = pet_data.get("name", "未知")
-            pet_id = pet_data.get("id", "未知")
-            
-            reply = (
-                f"✅ 精灵查询结果\n"
-                f"精灵名称: {name}\n"
-                f"精灵ID: {pet_id}"
-            )
-            yield event.plain_result(reply)
-
-        except aiohttp.ClientError as e:
-            logger.error(f"网络请求错误: {e}")
-            yield event.plain_result("❌ 网络异常，无法连接精灵查询接口")
-        except Exception as e:
-            logger.error(f"查询精灵发生错误: {type(e).__name__}: {e}", exc_info=True)
-            yield event.plain_result(f"❌ 查询出错：{str(e)}\n请查看控制台日志排查详情")
-
-    async def terminate(self):
-        '''插件卸载时调用'''
-        pass
+# 调用示例
+if __name__ == "__main__":
+    pet_name = "谱尼"  # 替换为目标精灵名称
+    pet_id = get_seer_pet_id(pet_name)
+    if pet_id is not None:
+        print(f"精灵「{pet_name}」的resource_id = {pet_id}")
+    else:
+        print("未能获取到精灵ID")
