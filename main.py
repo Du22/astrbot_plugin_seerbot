@@ -27,30 +27,8 @@ class SeerPetQueryPlugin(Star):
             # 调用 SeerAPI 异步查询
             async with SeerAPI() as client:
                 result = await client.get_by_name('pet', pet_name)
-
-            # 无结果处理
-            if not result:
-                yield event.plain_result(
-                    f"❌ 未找到名为「{pet_name}」的精灵\n请检查名称拼写是否正确"
-                )
-                return
-
-            # 排版构建：适配单结果/多结果场景
-            reply_lines = ["🔍 赛尔号精灵查询结果", "───────────────"]
-
-            if isinstance(result, list):
-                # 多匹配结果：自动编号列出
-                reply_lines.append(f"共找到 {len(result)} 个匹配结果：\n")
-                for index, pet in enumerate(result, start=1):
-                    reply_lines.append(f"{index}. 精灵名称：{pet.name}")
-                    reply_lines.append(f"   精灵ID：{pet.id}\n")
-            else:
-                # 单匹配结果：清晰字段展示
-                reply_lines.append(f"精灵名称：{result.name}")
-                reply_lines.append(f"精灵ID：{result.id}")
-
-            reply_lines.append("───────────────")
-            yield event.plain_result("\n".join(reply_lines))
+                print(f"精灵名称: {result.name}")
+                print(f"精灵ID: {result.id}")
 
         except Exception as e:
             # 全局异常捕获，避免插件崩溃
