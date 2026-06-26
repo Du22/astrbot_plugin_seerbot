@@ -19,16 +19,13 @@ class MyPlugin(Star):
             return
         pet_name =message_str[1].strip()
         async def main(self):
-         async with SeerAPI() as client:
-        # 查询技能数据
-          pet = await client.get_by_name('pet', pet_name)
-          print(f"精灵名称: {pet.name}")
-          print(f"精灵ID: {pet.id}")
-    
-   
-         logger.info("开始调取api") # 记录日志，方便调试
-
-         yield event.plain_result(f"精灵名称: {pet.name}\n精灵ID: {pet.id}") # 发送一条纯文本消息
+          async with SeerAPI() as client:
+              # 查询技能数据
+           pet = await client.get_by_name('pet', pet_name)
+           print(f"精灵名称: {pet.name}")
+           print(f"精灵ID: {pet.id}")
+          logger.info("开始调取api") # 记录日志，方便调试
+          yield event.plain_result(f"精灵名称: {pet.name}\n精灵ID: {pet.id}") # 发送一条纯文本消息
     
     
 
