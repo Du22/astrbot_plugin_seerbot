@@ -1,140 +1,92 @@
-"""
-AstrBot 赛尔号精灵查询插件
-适配 AstrBot v3 Star 架构
-基于 SeerAPI 实现精灵基础信息与技能效果查询
-"""
-from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star
 from seerapi import SeerAPI
+from astrbot.api.star import Context, Star
+from astrbot.api.event import filter, AstrMessageEvent
 
+# ========== 配置项 ==========
+# 种族值字段中文映射
+STAT_TRANSLATION = {
+    "hp": "生命",
+    "atk": "攻击",
+    "def": "防御",
+    "sp_atk": "特攻",
+    "sp_def": "特防",
+    "spd": "速度",
+    "total": "总和"
+}
+# 种族值固定输出顺序
+STAT_ORDER = ["hp", "atk", "def", "sp_atk", "sp_def", "spd"]
+# ============================
 
-class SeerQueryPlugin(Star):
+class SeerPetPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
 
-    @filter.command("精灵", aliases=["seer", "赛尔号精灵"])
+    @filter.command("查精灵", aliases=["精灵查询", "seer"])
     async def query_pet(self, event: AstrMessageEvent):
-        """查询精灵基础信息"""
-        args = event.message_str.strip().split(maxsplit=1)
-        if len(args) < 2:
-            yield event.plain_result("⚠️ 请输入精灵名称\n示例：/精灵 谱尼")
+        """赛尔号精灵查询，指令：查精灵 精灵名称"""
+        # 获取指令后的精灵名称参数
+        pet_name = event.message_str.strip()
+        
+        if not pet_name:
+            yield event.plain_result(
+                "请输入精灵名称，示例：\n查精灵 谱尼\n查精灵 圣灵谱尼"
+            )
             return
 
-        pet_name = args[1].strip()
         try:
+            # 调用 SeerAPI 查询
             async with SeerAPI() as client:
-                result = await client.get_by_name('pet', pet_name)
+                result = await client.get_by_name("pet", pet_name)
 
-                # ========== 核心修复：安全兼容 data 属性 ==========
-                if hasattr(result, 'data'):
-                    data = result.data
-                else:
-                    # 如果没有data属性，直接把result本身当数据字典
-                    data = result
+            # 未找到结果
+            if not result:
+                yield event.plain_result(
+                    f"未找到名为「{pet_name}」的精灵，请检查名称是否正确。"
+                )
+                return
+            
+            # 兼容返回列表/单个对象
+            pet = result[0] if isinstance(result, list) else result
 
-                if not data:
-                    yield event.plain_result(f"❌ 未查询到名为「{pet_name}」的精灵")
-                    return
-                # ==================================================
+            # 兼容属性对象与字典两种结构
+            base_stats = pet.base_stats
+            if hasattr(base_stats, "__dict__"):
+                stats_dict = {
+                    k: v for k, v in base_stats.__dict__.items()
+                    if not k.startswith("_") and isinstance(v, (int, float))
+                }
+            else:
+                stats_dict = dict(base_stats)
 
-                # 取第一个匹配结果
-                pet_id, pet = next(iter(data.items()))
+            # 格式化种族值
+            stats_lines = []
+            calc_total = 0
+            for key in STAT_ORDER:
+                if key in stats_dict:
+                    value = stats_dict[key]
+                    cn_name = STAT_TRANSLATION[key]
+                    stats_lines.append(f"{cn_name}：{value}")
+                    calc_total += value
 
-                # 排版优化
-                reply = f"🔍 精灵查询结果\n"
-                reply += "─────────────────\n"
-                reply += f"📌 序号：{pet_id}\n"
-                reply += f"📛 名称：{pet.name}\n"
+            # 优先使用接口返回的总和，无则自动计算
+            total = stats_dict.get("total", calc_total)
 
-                # 属性字段兼容
-                pet_type = getattr(pet, 'element', getattr(pet, 'type', '未知'))
-                reply += f"🎯 属性：{pet_type}\n"
+            # 排版输出
+            reply = (
+                "===== 精灵查询结果 =====\n"
+                f"精灵名称：{pet.name}\n"
+                f"精灵ID：{pet.id}\n"
+                "------------------------\n"
+                "          种族值\n"
+                "------------------------\n"
+                + "\n".join(stats_lines) +
+                "\n------------------------\n"
+                f"种族值总和：{total}"
+            )
 
-                # 种族值提取与自动求和
-                reply += "\n📊 种族值\n"
-                hp = getattr(pet, 'hp', 0)
-                atk = getattr(pet, 'attack', getattr(pet, 'atk', 0))
-                defense = getattr(pet, 'defense', getattr(pet, 'def', 0))
-                sp_atk = getattr(pet, 'special_attack', getattr(pet, 'sp_atk', 0))
-                sp_def = getattr(pet, 'special_defense', getattr(pet, 'sp_def', 0))
-                speed = getattr(pet, 'speed', 0)
-
-                reply += f"  体力：{hp}\n"
-                reply += f"  攻击：{atk}\n"
-                reply += f"  防御：{defense}\n"
-                reply += f"  特攻：{sp_atk}\n"
-                reply += f"  特防：{sp_def}\n"
-                reply += f"  速度：{speed}\n"
-
-                try:
-                    total = sum(map(int, [hp, atk, defense, sp_atk, sp_def, speed]))
-                    if total > 0:
-                        reply += f"  ──────\n  总和：{total}\n"
-                except (ValueError, TypeError):
-                    pass
-
-                yield event.plain_result(reply)
+            yield event.plain_result(reply)
 
         except Exception as e:
-            # 输出详细错误类型，方便排查
-            err_info = f"{type(e).__name__}: {str(e)}"
-            yield event.plain_result(f"⚠️ 查询出错：{err_info}")
-
-    @filter.command("技能", aliases=["skill", "赛尔号技能"])
-    async def query_skill(self, event: AstrMessageEvent):
-        """查询技能详细效果"""
-        args = event.message_str.strip().split(maxsplit=1)
-        if len(args) < 2:
-            yield event.plain_result("⚠️ 请输入技能名称\n示例：/技能 虚妄幻境")
-            return
-
-        skill_name = args[1].strip()
-        try:
-            async with SeerAPI() as client:
-                result = await client.get_by_name('skill', skill_name)
-
-                # 同步加固兼容
-                if hasattr(result, 'data'):
-                    data = result.data
-                else:
-                    data = result
-
-                if not data:
-                    yield event.plain_result(f"❌ 未查询到名为「{skill_name}」的技能")
-                    return
-
-                count = len(data)
-                reply = f"🔮 技能查询：{skill_name}\n"
-                reply += f"共找到 {count} 个同名技能\n"
-
-                for idx, (skill_id, skill) in enumerate(data.items(), 1):
-                    reply += "\n─────────────────\n"
-                    reply += f"【第 {idx} 个】ID: {skill_id}\n"
-
-                    # 技能基础信息兼容
-                    if hasattr(skill, 'skill_name'):
-                        reply += f"名称：{skill.skill_name}\n"
-                    skill_type = getattr(skill, 'skill_type', getattr(skill, 'type', '-'))
-                    reply += f"类型：{skill_type}\n"
-
-                    power = getattr(skill, 'power', '-')
-                    pp = getattr(skill, 'pp', '-')
-                    reply += f"威力：{power} | PP：{pp}\n"
-
-                    # 核心技能效果
-                    if hasattr(skill, 'skill_effect') and skill.skill_effect:
-                        reply += f"\n✨ 效果：\n{skill.skill_effect}\n"
-
-                # QQ单条消息长度保护
-                if len(reply) > 3800:
-                    reply = reply[:3800] + "\n\n...内容过长已截断"
-
-                yield event.plain_result(reply)
-
-        except Exception as e:
-            err_info = f"{type(e).__name__}: {str(e)}"
-            yield event.plain_result(f"⚠️ 查询出错：{err_info}")
-
-    async def terminate(self):
-        """插件卸载时调用，可选"""
-        pass
+            yield event.plain_result(
+                f"查询失败：{str(e)}\n请稍后重试，或确认精灵名称、API 服务是否正常。"
+            )
