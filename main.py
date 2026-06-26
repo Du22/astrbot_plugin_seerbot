@@ -1,37 +1,19 @@
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star
-from seerapi import SeerAPI
-import asyncio
+from astrbot.api import logger # 使用 astrbot 提供的 logger 接口
 
-
-class SeerPetQueryPlugin(Star):
+class MyPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
 
-    @filter.command("查精灵")
-    async def query_pet(self, event: AstrMessageEvent):
-        """
-        赛尔号精灵查询指令
-        用法：/查精灵 <精灵名称>
-        功能：按名称查询精灵ID与基础信息，支持单/多匹配结果
-        """
-        # 自主解析参数，兼容带空格的精灵名称
-        msg_parts = event.message_str.split(maxsplit=1)
-        if len(msg_parts) < 2 or not msg_parts[1].strip():
-            yield event.plain_result("⚠️ 指令参数缺失\n使用示例：/查精灵 谱尼")
-            return
+    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
+    @filter.command("你好")
+    async def helloworld(self, event: AstrMessageEvent):
+        '''这是一个 hello world 指令''' # 这是 handler 的描述，将会被解析方便用户了解插件内容。非常建议填写。
+        user_name = event.get_sender_name()
+        message_str = event.message_str # 获取消息的纯文本内容
+        logger.info("触发hello world指令!")
+        yield event.plain_result(f"Hello, {user_name}!") # 发送一条纯文本消息
 
-        pet_name = msg_parts[1].strip()
-
-        try:
-            # 调用 SeerAPI 异步查询
-            async with SeerAPI() as client:
-                result = await client.get_by_name('pet', '圣灵谱尼')
-                reply_lines = ["🔍 赛尔号精灵查询结果", "───────────────"]
-                reply_lines.append(f"精灵名称：{result.name}")
-                reply_lines.append(f"精灵ID：{result.id}")
-                reply_lines.append("───────────────")
-                yield event.plain_result("\n".join(reply_lines))
-        except Exception as e:
-            # 全局异常捕获，避免插件崩溃
-            yield event.plain_result(f"❌ 查询失败：{str(e)}\n请稍后重试或检查API服务状态")
+    async def terminate(self):
+        '''可选择实现 terminate 函数，当插件被卸载/停用时会调用。'''
