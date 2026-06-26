@@ -116,9 +116,9 @@ class SeerPetQueryPlugin(Star):
 
        # ========== 1. 🗡️基础信息🗡️ ==========
         # 兼容多种种族值字段命名
-        mintstats = mintmark.get("base_attr_value", {})
-        mintstats1 = mintmark.get("max_attr_value", {})
-        mintstats2 = mintmark.get("extra_attr_value", {})
+        mintstats = mintmark.get("base_attr_value", {}) or {}
+        mintstats1 = mintmark.get("max_attr_value", {}) or {}
+        mintstats2 = mintmark.get("extra_attr_value", {}) or {}
         mint_part = [
             f"【刻印信息】{mintmark.get('name', '未知刻印')}",
             "─────────────────────",
