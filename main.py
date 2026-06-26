@@ -26,8 +26,7 @@ class SeerPetQueryPlugin(Star):
         encoded_pet = quote(pet_name)
          # 精灵基础信息接口
         api_url = f"https://api.seerapi.com/v1/pet/{encoded_pet}"
-        # 魂印查询接口
-        soul_api = f"https://api.seerapi.com/v1/soulmark/{encoded_pet}"
+        
 
         try:
             timeout = aiohttp.ClientTimeout(total=10)
@@ -79,7 +78,7 @@ class SeerPetQueryPlugin(Star):
             f"🏃速度：{stats.get('spd', stats.get('speed', '未知'))}",
             "─────────────────────",
         ]
-    
+
         return "\n".join(base_part + stats_part)
     @filter.command("刻印")
     async def query_mintmark_info(self, event: AstrMessageEvent):
