@@ -24,7 +24,10 @@ class SeerPetQueryPlugin(Star):
         
         pet_name = parts[1].strip()
         encoded_pet = quote(pet_name)
+         # 精灵基础信息接口
         api_url = f"https://api.seerapi.com/v1/pet/{encoded_pet}"
+        # 魂印查询接口
+        soul_api = f"https://api.seerapi.com/v1/soulmark/{encoded_pet}"
 
         try:
             timeout = aiohttp.ClientTimeout(total=10)
@@ -48,11 +51,11 @@ class SeerPetQueryPlugin(Star):
         # 兼容有无外层 data 包裹
         pet = next(iter(raw_data.values()), {})
 
-        # ========== 🗡️1. 基础信息🗡️ ==========
+        # ========== 1. 🗡️基础信息🗡️ ==========
         # 兼容多种种族值字段命名
         stats = pet.get("base_stats", {})
         try:
-            total_stats = pet.get("total", sum(stats.values()))
+            total_stats = stats.get("total", {})
         except (TypeError, ValueError):
             total_stats = "未知"
 
@@ -61,11 +64,11 @@ class SeerPetQueryPlugin(Star):
             "─────────────────────",
             "【基础信息】",
             f"精灵序号：{pet.get('resource_id', pet.get('pet_id', '未知'))}",
-            f"种族值总和：{total_stats}/2",
+            f"种族值总和：{total_stats}",
             "─────────────────────",
         ]
 
-        # ========== ⚔️2. 种族值明细⚔️ ==========
+        # ========== 2. ⚔️种族值明细⚔️ ==========
         stats_part = [
             "【种族值明细】",
             f"🩸体力：{stats.get('hp', stats.get('vitality', '未知'))}",
@@ -76,5 +79,61 @@ class SeerPetQueryPlugin(Star):
             f"🏃速度：{stats.get('spd', stats.get('speed', '未知'))}",
             "─────────────────────",
         ]
-
+    
         return "\n".join(base_part + stats_part)
+    @filter.command("刻印")
+    async def query_mintmark_info(self, event: AstrMessageEvent):
+        '''查询赛尔号刻印信息，用法：刻印 刻印名称/刻印ID'''
+        message_text = event.message_str.strip()
+        parts = message_text.split(maxsplit=1)
+
+        if len(parts) < 2:
+            yield event.plain_result("请输入要查询的刻印名称，示例：\n/刻印 衡·巨刃")
+            return
+        
+        mintmark_name = parts[1].strip()
+        encoded_name = quote(mintmark_name)
+        mintmark_url = f"https://api.seerapi.com/v1/mintmark/{encoded_name}"
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(mintmark_url) as resp:
+                    if resp.status != 200:
+                        yield event.plain_result(f"查询失败：未找到刻印「{mintmark_name}」，请检查名称/ID是否正确")
+                        return
+                    mintmark_data = await resp.json()
+        except aiohttp.ClientError:
+            yield event.plain_result("网络请求失败，请检查网络连接后重试")
+            return
+        except Exception as e:
+            yield event.plain_result(f"查询异常：{str(e)}")
+            return
+        
+        formatted_msg = self._format_mintmark_output(mintmark_data, mintmark_name)
+        yield event.plain_result(formatted_msg)
+    def _format_mintmark_output(self, mintmark_data, input_name):
+        # 兼容ID为键的字典结构，遍历所有匹配结果
+        mintmark = next(iter(mintmark_data.values()), {})
+
+       # ========== 1. 🗡️基础信息🗡️ ==========
+        # 兼容多种种族值字段命名
+        mintstats = mintmark.get("base_attr_value", {})
+        
+        mint_part = [
+            f"【刻印信息】{mintmark.get('name', '未知刻印')}",
+            "─────────────────────",
+            "【基础信息】",
+            f"刻印ID：{mintmark.get('id', '未知')}",
+            f"满级数值：{mintmark.get('desc', '暂无数值描述')}",
+            "【基本数值】",
+            f"🩸体力：{mintstats.get('hp', mintstats.get('vitality', '0'))}",
+            f"🔪攻击：{mintstats.get('atk', mintstats.get('attack', '0'))}",
+            f"🛡️防御：{mintstats.get('def', mintstats.get('defense', '0'))}",
+            f"🔮特攻：{mintstats.get('sp_atk', mintstats.get('satk', mintstats.get('spatk', '0')))}",
+            f"🔰特防：{mintstats.get('sp_def', mintstats.get('sdef', mintstats.get('spdef', '0')))}",
+            f"🏃速度：{mintstats.get('spd', mintstats.get('speed', '0'))}",
+
+            "─────────────────────",
+        ]
+
+        return "\n".join(mint_part)
