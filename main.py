@@ -1,6 +1,7 @@
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 from seerapi import SeerAPI
+import asyncio
 
 
 class SeerPetQueryPlugin(Star):
