@@ -118,20 +118,21 @@ class SeerPetQueryPlugin(Star):
        # ========== 1. 🗡️基础信息🗡️ ==========
         # 兼容多种种族值字段命名
         mintstats = mintmark.get("base_attr_value", {})
-        
+        mintstats1 = mintmark.get("max_attr_value", {})
         mint_part = [
             f"【刻印信息】{mintmark.get('name', '未知刻印')}",
             "─────────────────────",
             "【基础信息】",
             f"刻印ID：{mintmark.get('id', '未知')}",
-            f"满级数值：{mintmark.get('desc', '暂无数值描述')}",
-            "【基本数值】",
-            f"🩸体力：{mintstats.get('hp', mintstats.get('vitality', '0'))}",
-            f"🔪攻击：{mintstats.get('atk', mintstats.get('attack', '0'))}",
-            f"🛡️防御：{mintstats.get('def', mintstats.get('defense', '0'))}",
-            f"🔮特攻：{mintstats.get('sp_atk', mintstats.get('satk', mintstats.get('spatk', '0')))}",
-            f"🔰特防：{mintstats.get('sp_def', mintstats.get('sdef', mintstats.get('spdef', '0')))}",
-            f"🏃速度：{mintstats.get('spd', mintstats.get('speed', '0'))}",
+            "【基本数值/满级数值】",
+            f"🩸体力：{mintstats.get('hp', mintstats.get('vitality', '0'))} / {mintstats1.get('hp', mintstats1.get('vitality', '0'))}",
+            f"🔪攻击：{mintstats.get('atk', mintstats.get('attack', '0'))} / {mintstats1.get('atk', mintstats1.get('attack', '0'))}",
+            f"🛡️防御：{mintstats.get('def', mintstats.get('defense', '0'))} / {mintstats1.get('def', mintstats1.get('defense', '0'))}",
+            f"🔮特攻：{mintstats.get('sp_atk', mintstats.get('satk', mintstats.get('spatk', '0')))} / {mintstats1.get('sp_atk', mintstats1.get('satk', mintstats1.get('spatk', '0')))}",
+            f"🔰特防：{mintstats.get('sp_def', mintstats.get('sdef', mintstats.get('spdef', '0')))} / {mintstats1.get('sp_def', mintstats1.get('sdef', mintstats1.get('spdef', '0')))}",
+            f"🏃速度：{mintstats.get('spd', mintstats.get('speed', '0'))} / {mintstats1.get('spd', mintstats1.get('speed', '0'))}",
+            f"🐉总和：{mintstats.get('total', mintstats.get('total_value', '0'))} / {mintstats1.get('total', mintstats1.get('total_value', '0'))}",
+
 
             "─────────────────────",
         ]
