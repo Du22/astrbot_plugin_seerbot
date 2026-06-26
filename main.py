@@ -48,7 +48,7 @@ class SeerPetQueryPlugin(Star):
         # 兼容有无外层 data 包裹
         pet = next(iter(raw_data.values()), {})
 
-        # ========== 1. 基础信息 ==========
+        # ========== 🗡️1. 基础信息🗡️ ==========
         # 兼容多种种族值字段命名
         stats = pet.get("base_stats", {})
         try:
@@ -61,47 +61,20 @@ class SeerPetQueryPlugin(Star):
             "─────────────────────",
             "【基础信息】",
             f"精灵序号：{pet.get('resource_id', pet.get('pet_id', '未知'))}",
-            f"种族值总和：{total_stats}",
+            f"种族值总和：{total_stats}/2",
             "─────────────────────",
         ]
 
-        # ========== 2. 种族值明细 ==========
+        # ========== ⚔️2. 种族值明细⚔️ ==========
         stats_part = [
             "【种族值明细】",
-            f"体力：{stats.get('hp', stats.get('vitality', '未知'))}",
-            f"攻击：{stats.get('atk', stats.get('attack', '未知'))}",
-            f"防御：{stats.get('def', stats.get('defense', '未知'))}",
-            f"特攻：{stats.get('sp_atk', stats.get('satk', stats.get('spatk', '未知')))}",
-            f"特防：{stats.get('sp_def', stats.get('sdef', stats.get('spdef', '未知')))}",
-            f"速度：{stats.get('spd', stats.get('speed', '未知'))}",
+            f"🩸体力：{stats.get('hp', stats.get('vitality', '未知'))}",
+            f"🔪攻击：{stats.get('atk', stats.get('attack', '未知'))}",
+            f"🛡️防御：{stats.get('def', stats.get('defense', '未知'))}",
+            f"🔮特攻：{stats.get('sp_atk', stats.get('satk', stats.get('spatk', '未知')))}",
+            f"🔰特防：{stats.get('sp_def', stats.get('sdef', stats.get('spdef', '未知')))}",
+            f"🏃速度：{stats.get('spd', stats.get('speed', '未知'))}",
             "─────────────────────",
         ]
 
-        # ========== 3. 技能体系 ==========
-        skills = pet.get("skills", pet.get("skill_list", []))
-        skill_count = len(skills)
-        fifth_skill = None
-        for skill in skills:
-            if skill.get("level", 0) >= 80:
-                fifth_skill = skill
-                break
-
-        skill_part = [
-            "【技能体系】",
-            f"共包含 {skill_count} 个等级解锁技能",
-        ]
-        if fifth_skill:
-            skill_part.append(
-                f"第五技能ID：{fifth_skill.get('id', '未知')}（{fifth_skill.get('level', '未知')}级解锁）"
-            )
-        skill_part.append("─────────────────────")
-
-        # ========== 4. 关联资源 ==========
-        related_part = [
-            "【关联资源】",
-            f"魂印ID：{pet.get('soulmark_id', pet.get('soul_id', '无'))}",
-            f"图鉴ID：{pet.get('dex_id', pet.get('book_id', '未知'))}",
-            f"巅峰归属：{'普通池' if pet.get('peak_pool_id') == 2 else '未知'}",
-        ]
-
-        return "\n".join(base_part + stats_part + skill_part + related_part)
+        return "\n".join(base_part + stats_part)
