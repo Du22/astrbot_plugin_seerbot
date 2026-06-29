@@ -39,9 +39,8 @@ class SeerPetQueryPlugin(Star):
                     raw_data = await resp.json()
                 
                 petsoul = next(iter(raw_data.values()), {})
-                soulmark1 = petsoul.get("soulmark", [])
-                soul_url = soulmark1.get("url", "")
-                async with session.get(soul_url) as soul_resp:
+                soulmark_url = petsoul["soulmark"][0]["url"]
+                async with session.get(soulmark_url) as soul_resp:
                     if soul_resp.status != 200:
                         yield event.plain_result(f"查询失败：未找到魂印")
                         return
