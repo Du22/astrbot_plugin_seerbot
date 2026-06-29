@@ -39,20 +39,19 @@ class SeerPetQueryPlugin(Star):
                     raw_data = await resp.json()
             # ========== 2. 新增：请求魂印详情，提取 desc 字段 ==========
             pet1= next(iter(raw_data.values()), {})
-            soul_desc = "未知"
-            # 兼容字段 + 类型判断，避免非字典时 .get() 报错
             soulmark = pet1.get("soulmark", pet1.get("vitality", {}))
             soulmark_url = soulmark.get("url", "")
               
             try:
                  async with session.get(soulmark_url) as soul_resp:
-                    if soul_resp.status == 200:
-                     soul_data = await soul_resp.json()
-                     soul_desc = soul_data.get("desc", "暂无魂印描述")
-                    else:
-                     soul_desc = "魂印详情获取失败"
+                    if soul_resp.status != 200:
+                        yield event.plain_result(f"查询失败：未找到魂印「{pet_name}」")
+                        return
+                    soul_data = await soul_resp.json()
+                    soul_desc = soul_data.get("desc", "暂无魂印描述")
+                
             except Exception:
-                     soul_desc = "魂印详情请求异常"
+                    soul_desc = "魂印详情请求异常"
 
         except aiohttp.ClientError:
             yield event.plain_result("网络请求失败，请检查网络连接后重试")
@@ -64,7 +63,7 @@ class SeerPetQueryPlugin(Star):
         formatted_msg = self._format_output(raw_data, pet_name, soul_desc)
         yield event.plain_result(formatted_msg)
 
-    def _format_output(self, raw_data, input_name, soul_desc = "未知"):
+    def _format_output(self, raw_data, input_name, soul_desc):
         # 兼容有无外层 data 包裹
         pet = next(iter(raw_data.values()), {})
 
