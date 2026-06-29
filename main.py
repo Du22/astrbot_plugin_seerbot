@@ -65,7 +65,7 @@ class SeerPetQueryPlugin(Star):
         formatted_msg = self._format_output(raw_data, pet_name, soul_desc)
         yield event.plain_result(formatted_msg)
 
-    def _format_output(self, raw_data, input_name, soul_desc="未知"):
+    def _format_output(self, raw_data, input_name, soul_desc):
         # 兼容有无外层 data 包裹
         pet = next(iter(raw_data.values()), {})
 
