@@ -37,22 +37,16 @@ class SeerPetQueryPlugin(Star):
                         yield event.plain_result(f"查询失败：未找到精灵「{pet_name}」，请检查名称/ID是否正确")
                         return
                     raw_data = await resp.json()
-            # ========== 2. 新增：请求魂印详情，提取 desc 字段 ==========
-            pet1= next(iter(raw_data.values()), {})
-            soulmark = pet1.get("soulmark", pet1.get("vitality", {}))
-            soulmark_url = soulmark.get("url", "")
-              
-            try:
-                 async with session.get(soulmark_url) as soul_resp:
-                    if soul_resp.status != 200:
-                        yield event.plain_result(f"查询失败：未找到魂印「{pet_name}」")
-                        return
-                    soul_data = await soul_resp.json()
-                    soul_desc = soul_data.get("desc", "暂无魂印描述")
                 
-            except Exception:
-                    soul_desc = "魂印详情请求异常"
-
+                soulmark = next(iter(raw_data.values()), {})
+                soulmark1 = soulmark.get("soulmark", {})
+                soul_url = soulmark1.get("url", "")
+                async with session.get(soul_url) as soul_resp:
+                    if soul_resp.status != 200:
+                        yield event.plain_result(f"查询失败：未找到魂印")
+                        return
+                    soul_raw_data = await soul_resp.json()
+           
         except aiohttp.ClientError:
             yield event.plain_result("网络请求失败，请检查网络连接后重试")
             return
@@ -60,10 +54,10 @@ class SeerPetQueryPlugin(Star):
             yield event.plain_result(f"查询异常：{str(e)}")
             return
 
-        formatted_msg = self._format_output(raw_data, pet_name, soul_desc)
+        formatted_msg = self._format_output(raw_data, pet_name, soul_raw_data)
         yield event.plain_result(formatted_msg)
 
-    def _format_output(self, raw_data, input_name, soul_desc):
+    def _format_output(self, raw_data, input_name, soul_raw_data):
         # 兼容有无外层 data 包裹
         pet = next(iter(raw_data.values()), {})
 
@@ -97,13 +91,15 @@ class SeerPetQueryPlugin(Star):
         ]
         
         # ========== 3. 魂印明细 ==========
-       
+        soul_desc = soul_raw_data.get("desc", "暂无描述")
         soul_part = [
             "【⚔️魂印明细⚔️】",
             f"魂印描述：{soul_desc}",
             "─────────────────────",
         ]
         return "\n".join(base_part + stats_part + soul_part)
+    
+
     @filter.command("刻印")
     async def query_mintmark_info(self, event: AstrMessageEvent):
         '''查询赛尔号刻印信息，用法：刻印 刻印名称/刻印ID'''
