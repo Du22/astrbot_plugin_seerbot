@@ -45,7 +45,16 @@ class SeerPetQueryPlugin(Star):
                         yield event.plain_result(f"查询失败：未找到魂印")
                         return
                     soul_raw_data = await soul_resp.json()
-           
+                
+                pettype = next(iter(raw_data.values()), {})
+                type = pettype.get("type", {})
+                pettype_url = type.get("url", "")
+                async with session.get(pettype_url) as pettype_resp:
+                    if pettype_resp.status != 200:
+                        yield event.plain_result(f"查询失败：未找到精灵类型")
+                        return
+                    pettype_raw_data = await pettype_resp.json()
+
         except aiohttp.ClientError:
             yield event.plain_result("网络请求失败，请检查网络连接后重试")
             return
@@ -53,16 +62,27 @@ class SeerPetQueryPlugin(Star):
             yield event.plain_result(f"查询异常：{str(e)}")
             return
 
-        formatted_msg = self._format_output(raw_data, pet_name, soul_raw_data)
+        formatted_msg = self._format_output(raw_data, pet_name, soul_raw_data, pettype_raw_data)
         yield event.plain_result(formatted_msg)
 
-    def _format_output(self, raw_data, input_name, soul_raw_data):
+    def _format_output(self, raw_data, input_name, soul_raw_data, pettype_raw_data):
         # 兼容有无外层 data 包裹
         pet = next(iter(raw_data.values()), {})
 
         # ========== 1. 基础信息 ==========
         # 兼容多种种族值字段命名
         stats = pet.get("base_stats", {})
+        xingbie = pet.get("gender", "未知")
+        xingbie1 = xingbie.get("id", "未知")
+        if xingbie1 == 0:
+         xingbie_str = "无性别"
+        elif xingbie1 == 1:
+         xingbie_str = "雄性"
+        elif xingbie1 == 2:
+         xingbie_str = "雌性"
+        else:
+         xingbie_str = "未知"  # 兜底异常值
+            
         try:
             total_stats = stats.get("total", {})
         except (TypeError, ValueError):
@@ -73,6 +93,8 @@ class SeerPetQueryPlugin(Star):
             "─────────────────────",
             "【🗡️基础信息🗡️】",
             f"精灵序号：{pet.get('resource_id', pet.get('pet_id', '未知'))}",
+            f"精灵性别：{xingbie_str}",
+            f"精灵属性：{pettype_raw_data.get('name', '未知')}",
             f"种族值总和：{total_stats}",
             "─────────────────────",
         ]
