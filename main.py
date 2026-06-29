@@ -31,11 +31,30 @@ class SeerPetQueryPlugin(Star):
         try:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
+                # ========== 1. 请求精灵基础信息 ==========
                 async with session.get(api_url) as resp:
                     if resp.status != 200:
                         yield event.plain_result(f"查询失败：未找到精灵「{pet_name}」，请检查名称/ID是否正确")
                         return
                     raw_data = await resp.json()
+            # ========== 2. 新增：请求魂印详情，提取 desc 字段 ==========
+            pet1= next(iter(raw_data.values()), {})
+            soul_desc = "未知"
+            # 兼容字段 + 类型判断，避免非字典时 .get() 报错
+            soulmark = pet1.get("soulmark", pet1.get("vitality", {}))
+            if isinstance(soulmark, dict):
+                soulmark_url = soulmark.get("url", "")
+                if soulmark_url:
+                    try:
+                        async with session.get(soulmark_url) as soul_resp:
+                            if soul_resp.status == 200:
+                                soul_data = await soul_resp.json()
+                                soul_desc = soul_data.get("desc", "暂无魂印描述")
+                            else:
+                                soul_desc = "魂印详情获取失败"
+                    except Exception:
+                        soul_desc = "魂印详情请求异常"
+
         except aiohttp.ClientError:
             yield event.plain_result("网络请求失败，请检查网络连接后重试")
             return
@@ -43,14 +62,14 @@ class SeerPetQueryPlugin(Star):
             yield event.plain_result(f"查询异常：{str(e)}")
             return
 
-        formatted_msg = self._format_output(raw_data, pet_name)
+        formatted_msg = self._format_output(raw_data, pet_name, soul_desc)
         yield event.plain_result(formatted_msg)
 
-    def _format_output(self, raw_data, input_name):
+    def _format_output(self, raw_data, input_name, soul_desc="未知"):
         # 兼容有无外层 data 包裹
         pet = next(iter(raw_data.values()), {})
 
-        # ========== 1. 🗡️基础信息🗡️ ==========
+        # ========== 1. 基础信息 ==========
         # 兼容多种种族值字段命名
         stats = pet.get("base_stats", {})
         try:
@@ -61,15 +80,15 @@ class SeerPetQueryPlugin(Star):
         base_part = [
             f"【精灵信息】{pet.get('name', pet.get('pet_name', input_name))}",
             "─────────────────────",
-            "【基础信息】",
+            "【🗡️基础信息🗡️】",
             f"精灵序号：{pet.get('resource_id', pet.get('pet_id', '未知'))}",
             f"种族值总和：{total_stats}",
             "─────────────────────",
         ]
 
-        # ========== 2. ⚔️种族值明细⚔️ ==========
+        # ========== 2. 种族值明细 ==========
         stats_part = [
-            "【种族值明细】",
+            "【⚔️种族值明细⚔️】",
             f"🩸体力：{stats.get('hp', stats.get('vitality', '未知'))}",
             f"🔪攻击：{stats.get('atk', stats.get('attack', '未知'))}",
             f"🛡️防御：{stats.get('def', stats.get('defense', '未知'))}",
@@ -78,8 +97,15 @@ class SeerPetQueryPlugin(Star):
             f"🏃速度：{stats.get('spd', stats.get('speed', '未知'))}",
             "─────────────────────",
         ]
-
-        return "\n".join(base_part + stats_part)
+        
+        # ========== 3. 魂印明细 ==========
+       
+        soul_part = [
+            "【⚔️魂印明细⚔️】",
+            f"魂印描述：{soul_desc}",
+            "─────────────────────",
+        ]
+        return "\n".join(base_part + stats_part + soul_part)
     @filter.command("刻印")
     async def query_mintmark_info(self, event: AstrMessageEvent):
         '''查询赛尔号刻印信息，用法：刻印 刻印名称/刻印ID'''
