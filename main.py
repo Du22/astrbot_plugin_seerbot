@@ -38,8 +38,8 @@ class SeerPetQueryPlugin(Star):
                         return
                     raw_data = await resp.json()
                 
-                soulmark = next(iter(raw_data.values()), {})
-                soulmark1 = soulmark.get("soulmark", {})
+                petsoul = next(iter(raw_data.values()), {})
+                soulmark1 = petsoul.get("soulmark", [])
                 soul_url = soulmark1.get("url", "")
                 async with session.get(soul_url) as soul_resp:
                     if soul_resp.status != 200:
